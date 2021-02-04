@@ -8,21 +8,21 @@ import (
 // MessageReceiver that allows receiving subscribed messages
 type MessageReceiver struct {
 	mu         sync.Mutex
-	ch         chan Message
-	backBuffer []Message
+	ch         chan *Publish
+	backBuffer []*Publish
 	closed     chan struct{}
 }
 
 // NewMessageReceiver new subscriber channel
 func NewMessageReceiver() *MessageReceiver {
 	return &MessageReceiver{
-		ch:     make(chan Message, 1),
+		ch:     make(chan *Publish, 1),
 		closed: make(chan struct{}),
 	}
 }
 
-func (m *MessageReceiver) Recv() (Message, error) {
-	var element Message
+func (m *MessageReceiver) Recv() (*Publish, error) {
+	var element *Publish
 	select {
 	case element = <-m.ch:
 	case <-m.closed:
@@ -35,7 +35,7 @@ func (m *MessageReceiver) Recv() (Message, error) {
 	return element, nil
 }
 
-func (m *MessageReceiver) send(p Message) error {
+func (m *MessageReceiver) send(p *Publish) error {
 	m.mu.Lock()
 	m.backBuffer = append(m.backBuffer, p)
 	m.shift()

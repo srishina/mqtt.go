@@ -29,10 +29,10 @@ func TestCodecUnsubAckPacket(t *testing.T) {
 	assert.NoError(t, err, "UnsubAck.decode returned an error")
 
 	assert.Equal(t, uint16(16), us.packetID)
-	assert.Equal(t, 3, len(us.Payload))
-	assert.Equal(t, UnsubAckNoSubscriptionExisted, us.Payload[0])
-	assert.Equal(t, UnsubAckReasonCodeNotAuthorized, us.Payload[1])
-	assert.Equal(t, UnsubAckReasonCodeSuccess, us.Payload[2])
+	assert.Equal(t, 3, len(us.ReasonCodes))
+	assert.Equal(t, UnsubAckNoSubscriptionExisted, us.ReasonCodes[0])
+	assert.Equal(t, UnsubAckReasonCodeNotAuthorized, us.ReasonCodes[1])
+	assert.Equal(t, UnsubAckReasonCodeSuccess, us.ReasonCodes[2])
 
 	var buf bytes.Buffer
 	err = us.encode(&buf)

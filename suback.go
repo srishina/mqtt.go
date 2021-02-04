@@ -137,9 +137,9 @@ func (sp *SubAckProperties) decode(r io.Reader) error {
 
 // SubAck MQTT SUBACK packet
 type SubAck struct {
-	packetID   uint16
-	Properties SubAckProperties
-	Payload    []SubAckReasonCode
+	packetID    uint16
+	Properties  SubAckProperties
+	ReasonCodes []SubAckReasonCode
 }
 
 // encode encode the SUBACK packet
@@ -147,7 +147,7 @@ func (s *SubAck) encode(w io.Writer) error {
 	propertyLen := s.Properties.propertyLen()
 	// calculate the remaining length
 	// 2 = session present + reason code
-	remainingLength := 2 + propertyLen + mqttutil.EncodedVarUint32Size(propertyLen) + uint32(len(s.Payload))
+	remainingLength := 2 + propertyLen + mqttutil.EncodedVarUint32Size(propertyLen) + uint32(len(s.ReasonCodes))
 	var packet bytes.Buffer
 	packet.Grow(int(1 + remainingLength + mqttutil.EncodedVarUint32Size(remainingLength)))
 	mqttutil.EncodeByte(&packet, byte(packettype.SUBACK<<4))
@@ -161,7 +161,7 @@ func (s *SubAck) encode(w io.Writer) error {
 		return err
 	}
 
-	if err := mqttutil.EncodeBinaryDataNoLen(&packet, *(*[]byte)(unsafe.Pointer(&s.Payload))); err != nil {
+	if err := mqttutil.EncodeBinaryDataNoLen(&packet, *(*[]byte)(unsafe.Pointer(&s.ReasonCodes))); err != nil {
 		return err
 	}
 	_, err := packet.WriteTo(w)
@@ -187,7 +187,7 @@ func (s *SubAck) decode(r io.Reader, remainingLen uint32) error {
 	remainingLen -= uint32(2 + propertyLen + mqttutil.EncodedVarUint32Size(propertyLen))
 	payload, _, err := mqttutil.DecodeBinaryDataNoLength(r, int(remainingLen))
 	for _, p := range payload {
-		s.Payload = append(s.Payload, SubAckReasonCode(p))
+		s.ReasonCodes = append(s.ReasonCodes, SubAckReasonCode(p))
 	}
 
 	return err

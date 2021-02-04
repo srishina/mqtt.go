@@ -129,19 +129,15 @@ func TestTopicMatch(t *testing.T) {
 	for k, v := range subscribeTopics {
 		expectedSubValues := []int{
 			i + 1,
-			i + 2,
 		}
 		i++
 		var topicMatcher = NewTopicMatcher()
 		if err := topicMatcher.Subscribe(k, &testSubscriber{value: i}); err != nil {
 			return
 		}
-		if err := topicMatcher.Subscribe(k, &testSubscriber{value: i + 1}); err != nil {
-			return
-		}
 		var subscribers []Subscriber
 		result := topicMatcher.Match(v, &subscribers)
-		assert.Equal(t, 2, len(subscribers), "topic matcher subscribe failed for %s %s %v", k, v, result)
+		assert.Equal(t, 1, len(subscribers), "topic matcher subscribe failed for %s %s %v", k, v, result)
 
 		for _, sub := range subscribers {
 			if s, ok := sub.(*testSubscriber); ok {

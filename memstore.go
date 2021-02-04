@@ -12,7 +12,6 @@ type memstore struct {
 	messages map[uint32]packet
 }
 
-// Put ..
 func (ms *memstore) Insert(key uint32, pkt packet) error {
 	ms.Lock()
 	defer ms.Unlock()
@@ -22,14 +21,12 @@ func (ms *memstore) Insert(key uint32, pkt packet) error {
 	return nil
 }
 
-// GetByID ..
 func (ms *memstore) GetByID(key uint32) packet {
 	ms.Lock()
 	defer ms.Unlock()
 	return ms.messages[key]
 }
 
-// Remove ..
 func (ms *memstore) DeleteByID(key uint32) {
 	ms.Lock()
 	defer ms.Unlock()
@@ -41,7 +38,20 @@ func (ms *memstore) DeleteByID(key uint32) {
 	}
 }
 
-// newMemStore ...
+func (ms *memstore) DeleteAll() {
+	ms.messages = make(map[uint32]packet)
+}
+
+func (ms *memstore) CopyItems() []packet {
+	ms.Lock()
+	defer ms.Unlock()
+	packets := make([]packet, 0)
+	for _, v := range ms.messages {
+		packets = append(packets, v)
+	}
+	return packets
+}
+
 func newMemStore() *memstore {
 	return &memstore{messages: make(map[uint32]packet)}
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/srishina/mqtt.go/internal/packettype"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,20 +28,16 @@ func newClient() (*Client, error) {
 	return client, nil
 }
 
-var mockSvr *mockServer
+var mqttMock *mqttMockTester
 
-func setup(responses map[packettype.PacketType]packet) (*Client, error) {
-	mockSvr = newMockServer()
-	mockSvr.responses = responses
-	go mockSvr.run()
-	client := NewClient(&mockClientConn{conn: mockSvr.clientConn})
-	return client, nil
-}
-
-func teardown() {
-	if mockSvr != nil {
-		mockSvr.stop()
+func setup(responses map[packettype.PacketType]packet, triggerPublish bool) (*Client, error) {
+	mqttMock = &mqttMockTester{
+		responses:                 responses,
+		triggerPublishOnsubscribe: triggerPublish,
 	}
+
+	client := NewClient(mqttMock)
+	return client, nil
 }
 
 func TestBasic(t *testing.T) {
@@ -50,14 +47,13 @@ func TestBasic(t *testing.T) {
 			SessionPresent: false,
 		},
 		packettype.SUBACK: &SubAck{
-			Payload: []SubAckReasonCode{SubAckReasonCodeGrantedQoS1},
+			ReasonCodes: []SubAckReasonCode{SubAckReasonCodeGrantedQoS1},
 		},
 		packettype.UNSUBACK: &UnsubAck{
-			Payload: []UnsubAckReasonCode{UnsubAckReasonCodeSuccess},
+			ReasonCodes: []UnsubAckReasonCode{UnsubAckReasonCodeSuccess},
 		},
 	}
-	client, err := setup(responses)
-	defer teardown()
+	client, err := setup(responses, false)
 
 	connack, err := client.Connect(context.Background(), &Connect{CleanStart: true})
 	require.NoError(t, err, "MQTT client connect failed")
@@ -68,158 +64,365 @@ func TestBasic(t *testing.T) {
 	s := &Subscribe{Subscriptions: []Subscription{{TopicFilter: "TEST/GREETING", QoSLevel: 1}}}
 	suback, err := client.Subscribe(context.Background(), s, recvr)
 	require.NoError(t, err, "MQTT client subscribe failed")
-	require.Equal(t, 1, len(suback.Payload))
-	require.Equal(t, SubAckReasonCodeGrantedQoS1, suback.Payload[0])
+	require.Equal(t, 1, len(suback.ReasonCodes))
+	require.Equal(t, SubAckReasonCodeGrantedQoS1, suback.ReasonCodes[0])
 
 	unsuback, err := client.Unsubscribe(context.Background(), &Unsubscribe{TopicFilters: []string{"TEST/GREETING"}})
 	require.NoError(t, err, "MQTT client unsubscribe failed")
-	require.Equal(t, 1, len(unsuback.Payload))
-	require.Equal(t, UnsubAckReasonCodeSuccess, unsuback.Payload[0])
+	require.Equal(t, 1, len(unsuback.ReasonCodes))
+	require.Equal(t, UnsubAckReasonCodeSuccess, unsuback.ReasonCodes[0])
 
 	// update the UNSUBACK response
 	responses[packettype.UNSUBACK] = &UnsubAck{
-		Payload: []UnsubAckReasonCode{UnsubAckNoSubscriptionExisted},
+		ReasonCodes: []UnsubAckReasonCode{UnsubAckNoSubscriptionExisted},
 	}
 
 	unsuback, err = client.Unsubscribe(context.Background(), &Unsubscribe{TopicFilters: []string{"TEST/GREETING"}})
 	require.NoError(t, err, "MQTT client unsubscribe with non-existing subscription failed")
-	require.Equal(t, 1, len(unsuback.Payload))
-	require.Equal(t, UnsubAckNoSubscriptionExisted, unsuback.Payload[0])
+	require.Equal(t, 1, len(unsuback.ReasonCodes))
+	require.Equal(t, UnsubAckNoSubscriptionExisted, unsuback.ReasonCodes[0])
 }
 
-func TestBasicWithKeepAlive(t *testing.T) {
+// func TestBasicWithKeepAlive(t *testing.T) {
+// 	responses := map[packettype.PacketType]packet{
+// 		packettype.CONNACK: &ConnAck{
+// 			ReasonCode:     ConnAckReasonCodeSuccess,
+// 			SessionPresent: false,
+// 		},
+// 		packettype.PINGRESP: &pingResp{},
+// 	}
+// 	client, err := setup(responses)
+
+// 	connack, err := client.Connect(context.Background(), &Connect{CleanStart: true, KeepAlive: 2})
+// 	require.NoError(t, err, "MQTT client connect failed")
+// 	require.Equal(t, ConnAckReasonCodeSuccess, connack.ReasonCode)
+// 	defer client.Disconnect(context.Background(), &Disconnect{})
+// 	time.Sleep(5 * time.Second)
+// }
+
+func TestSubUnsubCallback(t *testing.T) {
 	responses := map[packettype.PacketType]packet{
 		packettype.CONNACK: &ConnAck{
 			ReasonCode:     ConnAckReasonCodeSuccess,
 			SessionPresent: false,
 		},
-		packettype.PINGRESP: &pingResp{},
+		packettype.SUBACK: &SubAck{
+			ReasonCodes: []SubAckReasonCode{SubAckReasonCodeGrantedQoS1},
+		},
+		packettype.UNSUBACK: &UnsubAck{
+			ReasonCodes: []UnsubAckReasonCode{UnsubAckReasonCodeSuccess},
+		},
 	}
-	client, err := setup(responses)
-	defer teardown()
+	client, err := setup(responses, false)
 
-	connack, err := client.Connect(context.Background(), &Connect{CleanStart: true, KeepAlive: 5})
+	connack, err := client.Connect(context.Background(), &Connect{CleanStart: true})
 	require.NoError(t, err, "MQTT client connect failed")
 	require.Equal(t, ConnAckReasonCodeSuccess, connack.ReasonCode)
 	defer client.Disconnect(context.Background(), &Disconnect{})
-	time.Sleep(12 * time.Second)
+
+	s := &Subscribe{Subscriptions: []Subscription{{TopicFilter: "TEST/GREETING", QoSLevel: 1}}}
+	suback, err := client.CallbackSubscribe(context.Background(), s, func(m *Publish) {
+	})
+
+	require.NoError(t, err, "MQTT client subscribe failed")
+	require.Equal(t, 1, len(suback.ReasonCodes))
+	require.Equal(t, SubAckReasonCodeGrantedQoS1, suback.ReasonCodes[0])
+
+	unsuback, err := client.Unsubscribe(context.Background(), &Unsubscribe{TopicFilters: []string{"TEST/GREETING"}})
+	require.NoError(t, err, "MQTT client unsubscribe failed")
+	require.Equal(t, 1, len(unsuback.ReasonCodes))
+	require.Equal(t, UnsubAckReasonCodeSuccess, unsuback.ReasonCodes[0])
 }
 
-// func TestPubSub(t *testing.T) {
+func TestPublishQoS1(t *testing.T) {
+	responses := map[packettype.PacketType]packet{
+		packettype.CONNACK: &ConnAck{
+			ReasonCode:     ConnAckReasonCodeSuccess,
+			SessionPresent: false,
+		},
+		packettype.PUBACK: &PubAck{
+			ReasonCode: PubAckReasonCodeSuccess,
+		},
+	}
+	client, err := setup(responses, false)
 
-// 	client, err := newClient()
+	connack, err := client.Connect(context.Background(), &Connect{CleanStart: true})
+	require.NoError(t, err, "MQTT client connect failed")
+	require.Equal(t, ConnAckReasonCodeSuccess, connack.ReasonCode)
+	defer client.Disconnect(context.Background(), &Disconnect{})
 
-// 	connack, err := client.Connect(context.Background(), &Connect{CleanStart: true})
-// 	require.NoError(t, err, "MQTT client connect failed")
-// 	require.Equal(t, ConnAckReasonCodeSuccess, connack.ReasonCode)
-// 	defer client.Disconnect(context.Background(), &Disconnect{})
+	err = client.Publish(context.Background(), &Publish{TopicName: "TEST/GREETING", QoSLevel: 1, Payload: []byte("Hello world!")})
+	require.NoError(t, err, "MQTT client PUBLISH failed, QoS is 1")
+}
 
-// 	recvr := NewMessageReceiver()
-// 	s := &Subscribe{Subscriptions: []Subscription{{TopicFilter: "TEST/GREETING", QoSLevel: 1}}}
-// 	suback, err := client.Subscribe(context.Background(), s, recvr)
-// 	require.NoError(t, err, "MQTT client subscribe failed")
-// 	require.Equal(t, 1, len(suback.Payload))
-// 	require.Equal(t, SubAckReasonCodeGrantedQoS1, suback.Payload[0])
+func TestPublishQoS2(t *testing.T) {
+	responses := map[packettype.PacketType]packet{
+		packettype.CONNACK: &ConnAck{
+			ReasonCode:     ConnAckReasonCodeSuccess,
+			SessionPresent: false,
+		},
+		packettype.PUBREC: &PubRec{
+			ReasonCode: PubRecReasonCodeSuccess,
+		},
+		packettype.PUBCOMP: &PubComp{
+			ReasonCode: PubCompReasonCodeSuccess,
+		},
+	}
+	client, err := setup(responses, false)
 
-// 	defer client.Unsubscribe(context.Background(), &Unsubscribe{TopicFilters: []string{"TEST/GREETING"}})
+	connack, err := client.Connect(context.Background(), &Connect{CleanStart: true})
+	require.NoError(t, err, "MQTT client connect failed")
+	require.Equal(t, ConnAckReasonCodeSuccess, connack.ReasonCode)
+	defer client.Disconnect(context.Background(), &Disconnect{})
 
-// 	payloads := []string{
-// 		"Hello world!",
-// 		"Welcome!",
-// 		"Willkommen",
-// 	}
-// 	err = client.Publish(context.Background(), &Publish{TopicName: "TEST/GREETING", QoSLevel: 0, Payload: []byte(payloads[0])})
-// 	require.NoError(t, err, "MQTT client PUBLISH failed, QoS is 0")
-// 	err = client.Publish(context.Background(), &Publish{TopicName: "TEST/GREETING", QoSLevel: 1, Payload: []byte(payloads[1])})
-// 	require.NoError(t, err, "MQTT client PUBLISH failed, QoS is 1")
-// 	err = client.Publish(context.Background(), &Publish{TopicName: "TEST/GREETING", QoSLevel: 2, Payload: []byte(payloads[2])})
-// 	require.NoError(t, err, "MQTT client PUBLISH failed, QoS is 2")
+	err = client.Publish(context.Background(), &Publish{TopicName: "TEST/GREETING", QoSLevel: 2, Payload: []byte("Hello world!")})
+	require.NoError(t, err, "MQTT client PUBLISH failed, QoS is 2")
+}
 
-// 	time.Sleep(250 * time.Millisecond)
+func recvPublish(t *testing.T, publishResponses map[packettype.PacketType]packet, payload string) {
+	responses := map[packettype.PacketType]packet{
+		packettype.CONNACK: &ConnAck{
+			ReasonCode:     ConnAckReasonCodeSuccess,
+			SessionPresent: false,
+		},
+		packettype.SUBACK: &SubAck{
+			ReasonCodes: []SubAckReasonCode{SubAckReasonCodeGrantedQoS1},
+		},
+		packettype.UNSUBACK: &UnsubAck{
+			ReasonCodes: []UnsubAckReasonCode{UnsubAckReasonCodeSuccess},
+		},
+	}
+	for k, v := range publishResponses {
+		responses[k] = v
+	}
+	client, err := setup(responses, true)
 
-// 	for i := 1; i < len(payloads); i++ {
-// 		msg, err := recvr.Recv()
-// 		require.NoError(t, err, "Recv channel encountered an error")
-// 		require.Contains(t, payloads, string(msg.Payload()))
-// 	}
-// }
+	connack, err := client.Connect(context.Background(), &Connect{CleanStart: true})
+	assert.NoError(t, err, "MQTT client connect failed")
+	assert.Equal(t, ConnAckReasonCodeSuccess, connack.ReasonCode)
+	defer client.Disconnect(context.Background(), &Disconnect{})
 
-// func TestPubSubWithCallback(t *testing.T) {
+	pubRecvd := make(chan struct{}, 1)
+	var receivedPayload string
+	s := &Subscribe{Subscriptions: []Subscription{{TopicFilter: "TEST/GREETING/#", QoSLevel: 2}}}
+	suback, err := client.CallbackSubscribe(context.Background(), s, func(m *Publish) {
+		receivedPayload = string(m.Payload)
+		close(pubRecvd)
+	})
+	assert.NoError(t, err, "MQTT client subscribe failed")
+	assert.Equal(t, 1, len(suback.ReasonCodes))
+	assert.Equal(t, SubAckReasonCodeGrantedQoS1, suback.ReasonCodes[0])
 
-// 	client, err := newClient()
+	<-pubRecvd
+	assert.Equal(t, payload, receivedPayload)
 
-// 	connack, err := client.Connect(context.Background(), &Connect{CleanStart: true})
-// 	require.NoError(t, err, "MQTT client connect failed")
-// 	require.Equal(t, ConnAckReasonCodeSuccess, connack.ReasonCode)
-// 	defer client.Disconnect(context.Background(), &Disconnect{})
+	unsuback, err := client.Unsubscribe(context.Background(), &Unsubscribe{TopicFilters: []string{"TEST/GREETING/#"}})
+	assert.NoError(t, err, "MQTT client unsubscribe failed")
+	assert.Equal(t, 1, len(unsuback.ReasonCodes))
+	assert.Equal(t, UnsubAckReasonCodeSuccess, unsuback.ReasonCodes[0])
+}
 
-// 	var receivedPayloads []string
-// 	s := &Subscribe{Subscriptions: []Subscription{{TopicFilter: "TEST/GREETING", QoSLevel: 1}}}
-// 	suback, err := client.CallbackSubscribe(context.Background(), s, func(m Message) {
-// 		receivedPayloads = append(receivedPayloads, string(m.Payload()))
-// 	})
+func TestReceivePublishWithQoS0(t *testing.T) {
+	payload := "Willkommen!"
+	responses := map[packettype.PacketType]packet{
+		packettype.PUBLISH: &Publish{TopicName: "TEST/GREETING", QoSLevel: 0, Payload: []byte(payload)},
+	}
+	recvPublish(t, responses, payload)
+}
 
-// 	require.NoError(t, err, "MQTT client subscribe failed")
-// 	require.Equal(t, 1, len(suback.Payload))
-// 	require.Equal(t, SubAckReasonCodeGrantedQoS1, suback.Payload[0])
+func TestReceivePublishWithQoS1(t *testing.T) {
+	payload := "Willkommen!"
+	responses := map[packettype.PacketType]packet{
+		packettype.PUBLISH: &Publish{TopicName: "TEST/GREETING", QoSLevel: 1, Payload: []byte(payload)},
+	}
+	recvPublish(t, responses, payload)
+}
 
-// 	defer client.Unsubscribe(context.Background(), &Unsubscribe{TopicFilters: []string{"TEST/GREETING"}})
+func TestReceivePublishWithQoS2(t *testing.T) {
+	payload := "Willkommen!"
+	responses := map[packettype.PacketType]packet{
+		packettype.PUBLISH: &Publish{TopicName: "TEST/GREETING", QoSLevel: 2, Payload: []byte(payload)},
+		packettype.PUBREL:  &PubRel{ReasonCode: PubRelReasonCodeSuccess},
+	}
+	recvPublish(t, responses, payload)
+}
 
-// 	payloads := []string{
-// 		"Hello world!",
-// 		"Welcome!",
-// 		"Willkommen",
-// 	}
-// 	err = client.Publish(context.Background(), &Publish{TopicName: "TEST/GREETING", QoSLevel: 0, Payload: []byte(payloads[0])})
-// 	require.NoError(t, err, "MQTT client PUBLISH failed, QoS is 0")
-// 	err = client.Publish(context.Background(), &Publish{TopicName: "TEST/GREETING", QoSLevel: 1, Payload: []byte(payloads[1])})
-// 	require.NoError(t, err, "MQTT client PUBLISH failed, QoS is 1")
-// 	err = client.Publish(context.Background(), &Publish{TopicName: "TEST/GREETING", QoSLevel: 2, Payload: []byte(payloads[2])})
-// 	require.NoError(t, err, "MQTT client PUBLISH failed, QoS is 2")
+func TestClientReconnect(t *testing.T) {
+	responses := map[packettype.PacketType]packet{
+		packettype.CONNACK: &ConnAck{
+			ReasonCode:     ConnAckReasonCodeSuccess,
+			SessionPresent: false,
+		},
+	}
+	client, err := setup(responses, false)
+	reconencted := make(chan struct{})
+	client.On(ReconnectedEvent, func(connack *ConnAck) {
+		close(reconencted)
+	})
 
-// 	time.Sleep(250 * time.Millisecond)
-// 	require.ElementsMatch(t, payloads, receivedPayloads)
-// }
+	client.On(DisconnectedEvent, func(err error) {
+	})
+	connack, err := client.Connect(context.Background(), &Connect{CleanStart: true})
+	require.NoError(t, err, "MQTT client connect failed")
+	require.Equal(t, ConnAckReasonCodeSuccess, connack.ReasonCode)
 
-// func TestPubSubWithAlias(t *testing.T) {
+	// close the server
+	mqttMock.svrConn.Close()
 
-// 	client, err := newClient()
+	select {
+	case <-time.After(2 * time.Second):
+		require.Fail(t, "Must not timeout, failed")
+	case <-reconencted:
+	}
 
-// 	connack, err := client.Connect(context.Background(), &Connect{CleanStart: true})
-// 	require.NoError(t, err, "MQTT client connect failed")
-// 	require.Equal(t, ConnAckReasonCodeSuccess, connack.ReasonCode)
-// 	defer client.Disconnect(context.Background(), &Disconnect{})
+	client.Disconnect(context.Background(), &Disconnect{})
+}
 
-// 	recvr := NewMessageReceiver()
-// 	s := &Subscribe{Subscriptions: []Subscription{{TopicFilter: "TEST/GREETING", QoSLevel: 1}}}
-// 	suback, err := client.Subscribe(context.Background(), s, recvr)
-// 	require.NoError(t, err, "MQTT client subscribe failed")
-// 	require.Equal(t, 1, len(suback.Payload))
-// 	require.Equal(t, SubAckReasonCodeGrantedQoS1, suback.Payload[0])
+func TestAutoSubscribeAfterReconnect(t *testing.T) {
+	responses := map[packettype.PacketType]packet{
+		packettype.CONNACK: &ConnAck{
+			ReasonCode:     ConnAckReasonCodeSuccess,
+			SessionPresent: false,
+		},
+		packettype.SUBACK: &SubAck{
+			ReasonCodes: []SubAckReasonCode{SubAckReasonCodeGrantedQoS1},
+		},
+		packettype.UNSUBACK: &UnsubAck{
+			ReasonCodes: []UnsubAckReasonCode{UnsubAckReasonCodeSuccess},
+		},
+	}
+	client, err := setup(responses, false)
 
-// 	defer client.Unsubscribe(context.Background(), &Unsubscribe{TopicFilters: []string{"TEST/GREETING"}})
+	client.On(DisconnectedEvent, func(err error) {
+	})
 
-// 	payloads := []string{
-// 		"Hello world!",
-// 		"Welcome!",
-// 		"Willkommen",
-// 	}
-// 	topicAlias := uint16(2)
-// 	err = client.Publish(context.Background(), &Publish{TopicName: "TEST/GREETING", QoSLevel: 0,
-// 		Properties: PublishProperties{TopicAlias: &topicAlias}, Payload: []byte(payloads[0])})
-// 	require.NoError(t, err, "MQTT client PUBLISH failed, QoS is 0")
-// 	err = client.Publish(context.Background(), &Publish{TopicName: "", QoSLevel: 1,
-// 		Properties: PublishProperties{TopicAlias: &topicAlias}, Payload: []byte(payloads[1])})
-// 	require.NoError(t, err, "MQTT client PUBLISH failed, QoS is 1")
-// 	err = client.Publish(context.Background(), &Publish{TopicName: "", QoSLevel: 2,
-// 		Properties: PublishProperties{TopicAlias: &topicAlias}, Payload: []byte(payloads[2])})
-// 	require.NoError(t, err, "MQTT client PUBLISH failed, QoS is 2")
+	resubscribed := make(chan struct{})
+	client.On(ResubscribeEvent, func(result ResubscribeResult) {
+		if result.Error != nil {
+			t.Fail()
+		}
+		close(resubscribed)
+	})
 
-// 	time.Sleep(250 * time.Millisecond)
+	connack, err := client.Connect(context.Background(), &Connect{CleanStart: true})
+	require.NoError(t, err, "MQTT client connect failed")
+	require.Equal(t, ConnAckReasonCodeSuccess, connack.ReasonCode)
 
-// 	for i := 1; i < len(payloads); i++ {
-// 		msg, err := recvr.Recv()
-// 		require.NoError(t, err, "Recv channel encountered an error")
-// 		require.Contains(t, payloads, string(msg.Payload()))
-// 	}
-// }
+	recvr := NewMessageReceiver()
+	s := &Subscribe{Subscriptions: []Subscription{{TopicFilter: "TEST/GREETING", QoSLevel: 1}}}
+	suback, err := client.Subscribe(context.Background(), s, recvr)
+	require.NoError(t, err, "MQTT client subscribe failed")
+	require.Equal(t, 1, len(suback.ReasonCodes))
+	require.Equal(t, SubAckReasonCodeGrantedQoS1, suback.ReasonCodes[0])
+
+	// close the server
+	mqttMock.svrConn.Close()
+
+	select {
+	case <-time.After(2 * time.Second):
+		require.Fail(t, "Must not timeout, failed")
+	case <-resubscribed:
+	}
+
+	unsuback, err := client.Unsubscribe(context.Background(), &Unsubscribe{TopicFilters: []string{"TEST/GREETING"}})
+	require.NoError(t, err, "MQTT client unsubscribe failed")
+	require.Equal(t, 1, len(unsuback.ReasonCodes))
+	require.Equal(t, UnsubAckReasonCodeSuccess, unsuback.ReasonCodes[0])
+
+	client.Disconnect(context.Background(), &Disconnect{})
+}
+
+func testPublishAfterReconnect(t *testing.T, respConnAck *ConnAck, disconnectPktCount int) {
+	responses := map[packettype.PacketType]packet{
+		packettype.CONNACK: respConnAck,
+		packettype.PUBREC: &PubRec{
+			ReasonCode: PubRecReasonCodeSuccess,
+		},
+		packettype.PUBCOMP: &PubComp{
+			ReasonCode: PubCompReasonCodeSuccess,
+		},
+	}
+
+	client, err := setup(responses, false)
+
+	mqttMock.disconnectAtPacketCount = disconnectPktCount
+	client.On(DisconnectedEvent, func(err error) {
+	})
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	connack, err := client.Connect(context.Background(), &Connect{CleanStart: true})
+	require.NoError(t, err, "MQTT client connect failed")
+	require.Equal(t, ConnAckReasonCodeSuccess, connack.ReasonCode)
+
+	wg.Add(100)
+	// run 100 go routines
+	for i := 0; i < 100; i++ {
+		go func(n int) {
+			defer wg.Done()
+			<-start
+			err := client.Publish(context.Background(), &Publish{TopicName: "TEST/GREETING", QoSLevel: 2, Payload: []byte("Hello world!")})
+			require.NoError(t, err, "MQTT client PUBLISH failed, QoS is 2")
+		}(i)
+
+	}
+
+	completed := make(chan struct{})
+	go func() {
+		defer close(completed)
+		wg.Wait()
+	}()
+	close(start)
+
+	select {
+	case <-time.After(15 * time.Second):
+		require.Fail(t, "Must not timeout, failed")
+	case <-completed:
+	}
+
+	client.Disconnect(context.Background(), &Disconnect{})
+}
+func TestPublishAfterReconnectWithSession(t *testing.T) {
+	// with session
+	testPublishAfterReconnect(t, &ConnAck{
+		ReasonCode:     ConnAckReasonCodeSuccess,
+		SessionPresent: true,
+	}, 15)
+}
+
+func TestPublishAfterReconnectWithoutSession(t *testing.T) {
+	// without session
+	recvMax := uint16(10)
+	testPublishAfterReconnect(t, &ConnAck{
+		ReasonCode:     ConnAckReasonCodeSuccess,
+		SessionPresent: false,
+		Properties: ConnAckProperties{
+			ReceiveMaximum: &recvMax,
+		},
+	}, 30)
+}
+
+func TestSusbcriptionCache(t *testing.T) {
+	cache := subscriptionCache{}
+	s := &Subscribe{Subscriptions: []Subscription{
+		{TopicFilter: "TEST/GREETING", QoSLevel: 1},
+		{TopicFilter: "TEST/GREETING2", QoSLevel: 1},
+		{TopicFilter: "TEST/GREETING3", QoSLevel: 1},
+	}}
+
+	s2 := &Subscribe{Subscriptions: []Subscription{
+		{TopicFilter: "FOO/GREETING", QoSLevel: 1},
+		{TopicFilter: "FOO/GREETING2", QoSLevel: 1},
+		{TopicFilter: "FOO/GREETING3", QoSLevel: 1},
+	}}
+
+	cache = append(cache, s)
+	cache = append(cache, s2)
+	require.Equal(t, 2, len(cache))
+	cache.removeSubscriptionFromCache("TEST/GREETING2")
+	require.Equal(t, 2, len(cache))
+	require.Equal(t, 2, len(cache[0].Subscriptions))
+	cache.removeSubscriptionFromCache("TEST/GREETING")
+	cache.removeSubscriptionFromCache("TEST/GREETING3")
+	require.Equal(t, 1, len(cache))
+}

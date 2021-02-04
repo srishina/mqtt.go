@@ -17,20 +17,20 @@ type Connection interface {
 	Close()
 }
 
-// ConnectionChangeNotifier provides an interface for connection changes such connected or
-// disconnected
-type ConnectionChangeNotifier interface {
-	// notifies when a new connection has been established
-	OnConnected()
-	// notifies when a connection has been disconncted by a normal network drop
-	// or due to a MQTT DISCONNECT initiated by the broker
-	// Please check MQTTv5 spec for the reasons why the broker may send a DISCONNECT.
-	// The err represents the reason for the disconnection
-	OnDisconnected(err error)
-}
+// // ConnectionChangeNotifier provides an interface for connection changes such connected or
+// // disconnected
+// type ConnectionChangeNotifier interface {
+// 	// notifies when a new connection has been established
+// 	OnConnected()
+// 	// notifies when a connection has been disconncted by a normal network drop
+// 	// or due to a MQTT DISCONNECT initiated by the broker
+// 	// Please check MQTTv5 spec for the reasons why the broker may send a DISCONNECT.
+// 	// The err represents the reason for the disconnection
+// 	OnDisconnected(err error)
+// }
 
 // ConnectionWithChangeNotifier is the interface that groups the MQTT connection and listen functionalities
-type ConnectionWithChangeNotifier interface {
-	Connection
-	ConnectionChangeNotifier
-}
+// type ConnectionWithChangeNotifier interface {
+// 	Connection
+// 	ConnectionChangeNotifier
+// }

@@ -29,9 +29,9 @@ func TestCodecSubAckPacket(t *testing.T) {
 	assert.NoError(t, err, "SubAck.Decode returned an error")
 
 	assert.Equal(t, uint16(0x12), sa.packetID)
-	assert.Equal(t, 2, len(sa.Payload))
-	assert.Equal(t, SubAckReasonCodeGrantedQoS1, sa.Payload[0])
-	assert.Equal(t, SubAckReasonCodeGrantedQoS2, sa.Payload[1])
+	assert.Equal(t, 2, len(sa.ReasonCodes))
+	assert.Equal(t, SubAckReasonCodeGrantedQoS1, sa.ReasonCodes[0])
+	assert.Equal(t, SubAckReasonCodeGrantedQoS2, sa.ReasonCodes[1])
 
 	var buf bytes.Buffer
 	err = sa.encode(&buf)

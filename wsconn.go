@@ -12,12 +12,11 @@ import (
 )
 
 type websocketConn struct {
-	ConnectionWithChangeNotifier
-	conn           *websocket.Conn
-	changeNotifier ConnectionChangeNotifier
-	Host           string
-	TLSConfig      *tls.Config
-	rw             io.ReadWriter
+	Connection
+	conn      *websocket.Conn
+	Host      string
+	TLSConfig *tls.Config
+	rw        io.ReadWriter
 }
 
 func (w *websocketConn) BrokerURL() string {
@@ -48,17 +47,5 @@ func (w *websocketConn) Close() {
 	if w.conn != nil {
 		w.conn.Close()
 		w.conn = nil
-	}
-}
-
-func (w *websocketConn) OnConnected() {
-	if w.changeNotifier != nil {
-		w.changeNotifier.OnConnected()
-	}
-}
-
-func (w *websocketConn) OnDisconnected(err error) {
-	if w.changeNotifier != nil {
-		w.changeNotifier.OnDisconnected(err)
 	}
 }
