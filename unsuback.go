@@ -64,7 +64,7 @@ type UnsubAckProperties struct {
 	UserProperty map[string]string
 }
 
-func (usp *UnsubAckProperties) propertyLen() uint32 {
+func (usp *UnsubAckProperties) length() uint32 {
 	propertyLen := uint32(0)
 	propertyLen += properties.EncodedSize.FromUTF8String(usp.ReasonString)
 	propertyLen += properties.EncodedSize.FromUTF8StringPair(usp.UserProperty)
@@ -72,8 +72,6 @@ func (usp *UnsubAckProperties) propertyLen() uint32 {
 }
 
 func (usp *UnsubAckProperties) encode(buf *bytes.Buffer, propertyLen uint32) error {
-	mqttutil.EncodeVarUint32(buf, propertyLen)
-
 	if err := properties.Encoder.FromUTF8String(
 		buf, properties.ReasonStringID, usp.ReasonString); err != nil {
 		return err
@@ -87,9 +85,9 @@ func (usp *UnsubAckProperties) encode(buf *bytes.Buffer, propertyLen uint32) err
 	return nil
 }
 
-func (usp *UnsubAckProperties) decode(r io.Reader) error {
+func (usp *UnsubAckProperties) decode(r io.Reader, propertyLen uint32) error {
 	var id uint32
-	propertyLen, _, err := mqttutil.DecodeVarUint32(r)
+	var err error
 	for err == nil && propertyLen > 0 {
 		id, _, err = mqttutil.DecodeVarUint32(r)
 		if err != nil {
@@ -124,13 +122,41 @@ func (usp *UnsubAckProperties) decode(r io.Reader) error {
 // UnsubAck MQTT UNSUBACK packet
 type UnsubAck struct {
 	packetID    uint16
-	Properties  UnsubAckProperties
+	Properties  *UnsubAckProperties
 	ReasonCodes []UnsubAckReasonCode
+}
+
+func (us *UnsubAck) propertyLength() uint32 {
+	if us.Properties != nil {
+		return us.Properties.length()
+	}
+	return 0
+}
+
+func (us *UnsubAck) encodeProperties(buf *bytes.Buffer, propertyLen uint32) error {
+	mqttutil.EncodeVarUint32(buf, propertyLen)
+	if us.Properties != nil {
+		return us.Properties.encode(buf, propertyLen)
+	}
+	return nil
+}
+
+func (us *UnsubAck) decodeProperties(r io.Reader) error {
+	propertyLen, _, err := mqttutil.DecodeVarUint32(r)
+	if err != nil {
+		return err
+	}
+	if propertyLen > 0 {
+		us.Properties = &UnsubAckProperties{}
+		return us.Properties.decode(r, propertyLen)
+	}
+
+	return nil
 }
 
 // encode encode the UNSUBACK packet
 func (us *UnsubAck) encode(w io.Writer) error {
-	propertyLen := us.Properties.propertyLen()
+	propertyLen := us.propertyLength()
 	// calculate the remaining length
 	// 2 = session present + reason code
 	remainingLength := 2 + propertyLen + mqttutil.EncodedVarUint32Size(propertyLen) + uint32(len(us.ReasonCodes))
@@ -143,7 +169,7 @@ func (us *UnsubAck) encode(w io.Writer) error {
 		return err
 	}
 
-	if err := us.Properties.encode(&packet, propertyLen); err != nil {
+	if err := us.encodeProperties(&packet, propertyLen); err != nil {
 		return err
 	}
 
@@ -164,12 +190,12 @@ func (us *UnsubAck) decode(r io.Reader, remainingLen uint32) error {
 		return err
 	}
 
-	err = us.Properties.decode(r)
+	err = us.decodeProperties(r)
 	if err != nil {
 		return err
 	}
 
-	propertyLen := us.Properties.propertyLen()
+	propertyLen := us.propertyLength()
 	remainingLen -= uint32(2 + propertyLen + mqttutil.EncodedVarUint32Size(propertyLen))
 	payload, _, err := mqttutil.DecodeBinaryDataNoLength(r, int(remainingLen))
 	for _, p := range payload {

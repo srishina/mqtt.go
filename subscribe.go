@@ -20,7 +20,7 @@ type SubscribeProperties struct {
 	UserProperty           map[string]string
 }
 
-func (sp *SubscribeProperties) propertyLen() uint32 {
+func (sp *SubscribeProperties) length() uint32 {
 	propertyLen := uint32(0)
 	propertyLen += properties.EncodedSize.FromVarUin32((sp.SubscriptionIdentifier))
 	propertyLen += properties.EncodedSize.FromUTF8StringPair(sp.UserProperty)
@@ -28,7 +28,6 @@ func (sp *SubscribeProperties) propertyLen() uint32 {
 }
 
 func (sp *SubscribeProperties) encode(buf *bytes.Buffer, propertyLen uint32) error {
-	mqttutil.EncodeVarUint32(buf, propertyLen)
 	if err := properties.Encoder.FromVarUint32(
 		buf, properties.SubscriptionIdentifierID, sp.SubscriptionIdentifier); err != nil {
 		return err
@@ -41,10 +40,9 @@ func (sp *SubscribeProperties) encode(buf *bytes.Buffer, propertyLen uint32) err
 	return nil
 }
 
-func (sp *SubscribeProperties) decode(r io.Reader) error {
+func (sp *SubscribeProperties) decode(r io.Reader, propertyLen uint32) error {
 	var id uint32
-
-	propertyLen, _, err := mqttutil.DecodeVarUint32(r)
+	var err error
 	for err == nil && propertyLen > 0 {
 		id, _, err = mqttutil.DecodeVarUint32(r)
 		if err != nil {
@@ -92,7 +90,35 @@ type Subscription struct {
 type Subscribe struct {
 	packetID      uint16
 	Subscriptions []Subscription
-	Properties    SubscribeProperties
+	Properties    *SubscribeProperties
+}
+
+func (s *Subscribe) propertyLength() uint32 {
+	if s.Properties != nil {
+		return s.Properties.length()
+	}
+	return 0
+}
+
+func (s *Subscribe) encodeProperties(buf *bytes.Buffer, propertyLen uint32) error {
+	mqttutil.EncodeVarUint32(buf, propertyLen)
+	if s.Properties != nil {
+		return s.Properties.encode(buf, propertyLen)
+	}
+	return nil
+}
+
+func (s *Subscribe) decodeProperties(r io.Reader) error {
+	propertyLen, _, err := mqttutil.DecodeVarUint32(r)
+	if err != nil {
+		return err
+	}
+	if propertyLen > 0 {
+		s.Properties = &SubscribeProperties{}
+		return s.Properties.decode(r, propertyLen)
+	}
+
+	return nil
 }
 
 // encode encode the SUBSCRIBE packet
@@ -102,7 +128,7 @@ func (s *Subscribe) encode(w io.Writer) error {
 		return ErrNoTopicsPresent
 	}
 
-	propertyLen := s.Properties.propertyLen()
+	propertyLen := s.propertyLength()
 	// calculate the remaining length
 	// 2 = packet ID
 	remainingLength := 2 + propertyLen + mqttutil.EncodedVarUint32Size(propertyLen)
@@ -122,7 +148,7 @@ func (s *Subscribe) encode(w io.Writer) error {
 		return err
 	}
 
-	if err := s.Properties.encode(&packet, propertyLen); err != nil {
+	if err := s.encodeProperties(&packet, propertyLen); err != nil {
 		return err
 	}
 
@@ -160,12 +186,12 @@ func (s *Subscribe) decode(r io.Reader, remainingLen uint32) error {
 		return err
 	}
 
-	err = s.Properties.decode(r)
+	err = s.decodeProperties(r)
 	if err != nil {
 		return err
 	}
 
-	propertyLen := s.Properties.propertyLen()
+	propertyLen := s.propertyLength()
 	remainingLen -= (uint32(2) + propertyLen + mqttutil.EncodedVarUint32Size(propertyLen))
 
 	for remainingLen > 0 {

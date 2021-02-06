@@ -128,8 +128,6 @@ func (dp *DisconnectProperties) length() uint32 {
 }
 
 func (dp *DisconnectProperties) encode(buf *bytes.Buffer, propertyLen uint32) error {
-	mqttutil.EncodeVarUint32(buf, propertyLen)
-
 	if err := properties.Encoder.FromUint32(
 		buf, properties.SessionExpiryIntervalID, dp.SessionExpiryInterval); err != nil {
 		return err
@@ -153,9 +151,9 @@ func (dp *DisconnectProperties) encode(buf *bytes.Buffer, propertyLen uint32) er
 	return nil
 }
 
-func (dp *DisconnectProperties) decode(r io.Reader) error {
+func (dp *DisconnectProperties) decode(r io.Reader, propertyLen uint32) error {
 	var id uint32
-	propertyLen, _, err := mqttutil.DecodeVarUint32(r)
+	var err error
 	for err == nil && propertyLen > 0 {
 		id, _, err = mqttutil.DecodeVarUint32(r)
 		if err != nil {
@@ -195,12 +193,40 @@ func (dp *DisconnectProperties) decode(r io.Reader) error {
 // Disconnect MQTT DISCONNECT packet
 type Disconnect struct {
 	ReasonCode DisconnectReasonCode
-	Properties DisconnectProperties
+	Properties *DisconnectProperties
+}
+
+func (d *Disconnect) propertyLength() uint32 {
+	if d.Properties != nil {
+		return d.Properties.length()
+	}
+	return 0
+}
+
+func (d *Disconnect) encodeProperties(buf *bytes.Buffer, propertyLen uint32) error {
+	mqttutil.EncodeVarUint32(buf, propertyLen)
+	if d.Properties != nil {
+		return d.Properties.encode(buf, propertyLen)
+	}
+	return nil
+}
+
+func (d *Disconnect) decodeProperties(r io.Reader) error {
+	propertyLen, _, err := mqttutil.DecodeVarUint32(r)
+	if err != nil {
+		return err
+	}
+	if propertyLen > 0 {
+		d.Properties = &DisconnectProperties{}
+		return d.Properties.decode(r, propertyLen)
+	}
+
+	return nil
 }
 
 // encode encode the DISCONNECT packet
 func (d *Disconnect) encode(w io.Writer) error {
-	propertyLen := d.Properties.length()
+	propertyLen := d.propertyLength()
 	// calculate the remaining length
 	// 1 =  reason code
 	remainingLength := 1 + propertyLen + mqttutil.EncodedVarUint32Size(propertyLen)
@@ -213,7 +239,7 @@ func (d *Disconnect) encode(w io.Writer) error {
 		return err
 	}
 
-	if err := d.Properties.encode(&packet, propertyLen); err != nil {
+	if err := d.encodeProperties(&packet, propertyLen); err != nil {
 		return err
 	}
 
@@ -232,5 +258,5 @@ func (d *Disconnect) decode(r io.Reader, remainingLen uint32) error {
 	}
 	d.ReasonCode = DisconnectReasonCode(reasonCode)
 
-	return d.Properties.decode(r)
+	return d.decodeProperties(r)
 }

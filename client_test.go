@@ -396,7 +396,7 @@ func TestPublishAfterReconnectWithoutSession(t *testing.T) {
 	testPublishAfterReconnect(t, &ConnAck{
 		ReasonCode:     ConnAckReasonCodeSuccess,
 		SessionPresent: false,
-		Properties: ConnAckProperties{
+		Properties: &ConnAckProperties{
 			ReceiveMaximum: &recvMax,
 		},
 	}, 30)

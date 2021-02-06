@@ -122,7 +122,7 @@ type ConnAckProperties struct {
 	AuthenticationData              []byte
 }
 
-func (cp *ConnAckProperties) propertyLen() uint32 {
+func (cp *ConnAckProperties) length() uint32 {
 	propertyLen := uint32(0)
 
 	propertyLen += properties.EncodedSize.FromUint32(cp.SessionExpiryInterval)
@@ -147,8 +147,6 @@ func (cp *ConnAckProperties) propertyLen() uint32 {
 }
 
 func (cp *ConnAckProperties) encode(buf *bytes.Buffer, propertyLen uint32) error {
-	mqttutil.EncodeVarUint32(buf, propertyLen)
-
 	if err := properties.Encoder.FromUint32(
 		buf, properties.SessionExpiryIntervalID, cp.SessionExpiryInterval); err != nil {
 		return err
@@ -237,9 +235,9 @@ func (cp *ConnAckProperties) encode(buf *bytes.Buffer, propertyLen uint32) error
 	return nil
 }
 
-func (cp *ConnAckProperties) decode(r io.Reader) error {
+func (cp *ConnAckProperties) decode(r io.Reader, propertyLen uint32) error {
 	var id uint32
-	propertyLen, _, err := mqttutil.DecodeVarUint32(r)
+	var err error
 	for err == nil && propertyLen > 0 {
 		id, _, err = mqttutil.DecodeVarUint32(r)
 		if err != nil {
@@ -329,12 +327,42 @@ func (cp *ConnAckProperties) decode(r io.Reader) error {
 type ConnAck struct {
 	SessionPresent bool
 	ReasonCode     ConnAckReasonCode
-	Properties     ConnAckProperties
+	Properties     *ConnAckProperties
+}
+
+// propertyLength property length
+func (c *ConnAck) propertyLength() uint32 {
+	if c.Properties != nil {
+		return c.Properties.length()
+	}
+	return 0
+}
+
+func (c *ConnAck) encodeProperties(buf *bytes.Buffer, propertyLen uint32) error {
+	mqttutil.EncodeVarUint32(buf, propertyLen)
+	if c.Properties != nil {
+		return c.Properties.encode(buf, propertyLen)
+	}
+	return nil
+}
+
+func (c *ConnAck) decodeProperties(r io.Reader) error {
+	propertyLen, _, err := mqttutil.DecodeVarUint32(r)
+	if err != nil {
+		return err
+	}
+	if propertyLen > 0 {
+		c.Properties = &ConnAckProperties{}
+		return c.Properties.decode(r, propertyLen)
+	}
+
+	return nil
 }
 
 // encode encode the CONNACK packet
 func (c *ConnAck) encode(w io.Writer) error {
-	propertyLen := c.Properties.propertyLen()
+	propertyLen := c.propertyLength()
+
 	// calculate the remaining length
 	// 2 = session present + reason code
 	remainingLength := 2 + propertyLen + mqttutil.EncodedVarUint32Size(propertyLen)
@@ -351,7 +379,7 @@ func (c *ConnAck) encode(w io.Writer) error {
 		return err
 	}
 
-	if err := c.Properties.encode(&packet, propertyLen); err != nil {
+	if err := c.encodeProperties(&packet, propertyLen); err != nil {
 		return err
 	}
 
@@ -375,5 +403,5 @@ func (c *ConnAck) decode(r io.Reader, remainingLen uint32) error {
 	}
 	c.ReasonCode = ConnAckReasonCode(reasonCode)
 
-	return c.Properties.decode(r)
+	return c.decodeProperties(r)
 }

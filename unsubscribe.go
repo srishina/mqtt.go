@@ -14,15 +14,13 @@ type UnsubscribeProperties struct {
 	UserProperty map[string]string
 }
 
-func (usp *UnsubscribeProperties) propertyLen() uint32 {
+func (usp *UnsubscribeProperties) length() uint32 {
 	propertyLen := uint32(0)
 	propertyLen += properties.EncodedSize.FromUTF8StringPair(usp.UserProperty)
 	return propertyLen
 }
 
 func (usp *UnsubscribeProperties) encode(buf *bytes.Buffer, propertyLen uint32) error {
-	mqttutil.EncodeVarUint32(buf, propertyLen)
-
 	if err := properties.Encoder.FromUTF8StringPair(
 		buf, properties.UserPropertyID, usp.UserProperty); err != nil {
 		return err
@@ -30,10 +28,9 @@ func (usp *UnsubscribeProperties) encode(buf *bytes.Buffer, propertyLen uint32) 
 	return nil
 }
 
-func (usp *UnsubscribeProperties) decode(r io.Reader) error {
+func (usp *UnsubscribeProperties) decode(r io.Reader, propertyLen uint32) error {
 	var id uint32
-
-	propertyLen, _, err := mqttutil.DecodeVarUint32(r)
+	var err error
 	for err == nil && propertyLen > 0 {
 		id, _, err = mqttutil.DecodeVarUint32(r)
 		if err != nil {
@@ -64,14 +61,42 @@ func (usp *UnsubscribeProperties) decode(r io.Reader) error {
 // Unsubscribe MQTT unsubscribe packet
 type Unsubscribe struct {
 	packetID     uint16
-	Properties   UnsubscribeProperties
+	Properties   *UnsubscribeProperties
 	TopicFilters []string
+}
+
+func (us *Unsubscribe) propertyLength() uint32 {
+	if us.Properties != nil {
+		return us.Properties.length()
+	}
+	return 0
+}
+
+func (us *Unsubscribe) encodeProperties(buf *bytes.Buffer, propertyLen uint32) error {
+	mqttutil.EncodeVarUint32(buf, propertyLen)
+	if us.Properties != nil {
+		return us.Properties.encode(buf, propertyLen)
+	}
+	return nil
+}
+
+func (us *Unsubscribe) decodeProperties(r io.Reader) error {
+	propertyLen, _, err := mqttutil.DecodeVarUint32(r)
+	if err != nil {
+		return err
+	}
+	if propertyLen > 0 {
+		us.Properties = &UnsubscribeProperties{}
+		return us.Properties.decode(r, propertyLen)
+	}
+
+	return nil
 }
 
 // encode encode the SUBSCRIBE packet
 func (us *Unsubscribe) encode(w io.Writer) error {
 	const fixedHeader = byte(0xA2)
-	propertyLen := us.Properties.propertyLen()
+	propertyLen := us.propertyLength()
 	// calculate the remaining length
 	// 2 = packet ID
 	remainingLength := 2 + propertyLen + mqttutil.EncodedVarUint32Size(propertyLen)
@@ -91,7 +116,7 @@ func (us *Unsubscribe) encode(w io.Writer) error {
 		return err
 	}
 
-	if err := us.Properties.encode(&packet, propertyLen); err != nil {
+	if err := us.encodeProperties(&packet, propertyLen); err != nil {
 		return err
 	}
 	for _, t := range us.TopicFilters {
@@ -113,12 +138,12 @@ func (us *Unsubscribe) decode(r io.Reader, remainingLen uint32) error {
 		return err
 	}
 
-	err = us.Properties.decode(r)
+	err = us.decodeProperties(r)
 	if err != nil {
 		return err
 	}
 
-	propertyLen := us.Properties.propertyLen()
+	propertyLen := us.propertyLength()
 	remainingLen -= (uint32(2) + propertyLen + mqttutil.EncodedVarUint32Size(propertyLen))
 	for remainingLen > 0 {
 		topicFilter, _, err := mqttutil.DecodeUTF8String(r)

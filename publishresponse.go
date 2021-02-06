@@ -25,8 +25,6 @@ func (sp *PublishResponseProperties) length() uint32 {
 }
 
 func (sp *PublishResponseProperties) encode(buf *bytes.Buffer, propertyLen uint32) error {
-	mqttutil.EncodeVarUint32(buf, propertyLen)
-
 	if err := properties.Encoder.FromUTF8String(
 		buf, properties.ReasonStringID, sp.ReasonString); err != nil {
 		return err
@@ -40,9 +38,9 @@ func (sp *PublishResponseProperties) encode(buf *bytes.Buffer, propertyLen uint3
 	return nil
 }
 
-func (sp *PublishResponseProperties) decode(r io.Reader) error {
+func (sp *PublishResponseProperties) decode(r io.Reader, propertyLen uint32) error {
 	var id uint32
-	propertyLen, _, err := mqttutil.DecodeVarUint32(r)
+	var err error
 	for err == nil && propertyLen > 0 {
 		id, _, err = mqttutil.DecodeVarUint32(r)
 		if err != nil {
@@ -128,15 +126,21 @@ func (code PubAckReasonCode) Desc() string {
 	return pubAckReasonCodeDesc[code]
 }
 
-func encodePublishResponse(byte0 byte, id uint16, code byte, props *PublishResponseProperties) (*bytes.Buffer, error) {
-	propertyLen := props.length()
+func encodePublishResponse(byte0 byte, id uint16, code byte, propEncoder publishResponsePropertyEncoder) (*bytes.Buffer, error) {
+	propertyLen := propEncoder.propertyLength()
 	// calculate the remaining length
 	remainingLength := uint32(2) // packet id
-	// The Reason Code and Property Length can be omitted
-	// if the Reason Code is 0x00 (Success) and there are no Properties.
-	// In this case the packet has a Remaining Length of 2.
-	if code != 0 || propertyLen != 0 {
+	// The Reason Code or Property Length or both can be omitted
+	// if the Reason Code is 0x00 (Success) and there are no Properties, then both can be
+	// omitted and the remaining length is 2
+	// If the reason code is not 0x00 and there are no properties then the
+	// remaining length is 3
+	// If the reason code is  0x00 and there are  properties then the
+	// remaining length is greather than 3
+	if propertyLen != 0 {
 		remainingLength += (1 + propertyLen + mqttutil.EncodedVarUint32Size(propertyLen))
+	} else if code != 0 {
+		remainingLength += uint32(1)
 	}
 
 	var packet bytes.Buffer
@@ -149,50 +153,93 @@ func encodePublishResponse(byte0 byte, id uint16, code byte, props *PublishRespo
 	}
 
 	if remainingLength > 2 {
+		// encode the reason code
 		if err := mqttutil.EncodeByte(&packet, code); err != nil {
 			return nil, err
 		}
-
-		if err := props.encode(&packet, propertyLen); err != nil {
-			return nil, err
+		if remainingLength > 3 {
+			// we have properties
+			mqttutil.EncodeVarUint32(&packet, propertyLen)
+			if err := propEncoder.encodeProperties(&packet, propertyLen); err != nil {
+				return nil, err
+			}
 		}
 	}
 
 	return &packet, nil
 }
 
-func decodePublishResponse(r io.Reader, remainingLen uint32) (uint16, byte, PublishResponseProperties, error) {
-	var props PublishResponseProperties
+func (pa *PubAck) decodeProperties(r io.Reader) error {
+	propertyLen, _, err := mqttutil.DecodeVarUint32(r)
+	if err != nil {
+		return err
+	}
+	if propertyLen > 0 {
+		pa.Properties = &PublishResponseProperties{}
+		return pa.Properties.decode(r, propertyLen)
+	}
+
+	return nil
+}
+
+func decodePublishResponse(r io.Reader, remainingLen uint32) (uint16, byte, *PublishResponseProperties, error) {
+	var props *PublishResponseProperties
 	var code byte
 
 	packetID, err := mqttutil.DecodeBigEndianUint16(r)
 	if err != nil {
-		return 0, 0, PublishResponseProperties{}, err
+		return 0, 0, nil, err
 	}
 
 	if remainingLen > 2 {
 		code, err = mqttutil.DecodeByte(r)
 		if err != nil {
-			return 0, 0, PublishResponseProperties{}, err
+			return 0, 0, nil, err
 		}
-
-		if err := props.decode(r); err != nil {
-			return 0, 0, PublishResponseProperties{}, err
+		if remainingLen > 3 {
+			propertyLen, _, err := mqttutil.DecodeVarUint32(r)
+			if err != nil {
+				return 0, 0, nil, err
+			}
+			if propertyLen > 0 {
+				props = &PublishResponseProperties{}
+				props.decode(r, propertyLen)
+			}
 		}
 	}
 
 	return packetID, code, props, nil
 }
 
+type publishResponsePropertyEncoder interface {
+	propertyLength() uint32
+	encodeProperties(buf *bytes.Buffer, propertyLen uint32) error
+}
+
 //PubAck MQTT PUBACK packet
 type PubAck struct {
 	packetID   uint16
 	ReasonCode PubAckReasonCode
-	Properties PublishResponseProperties
+	Properties *PublishResponseProperties
+}
+
+func (pa *PubAck) propertyLength() uint32 {
+	if pa.Properties != nil {
+		return pa.Properties.length()
+	}
+	return 0
+}
+
+func (pa *PubAck) encodeProperties(buf *bytes.Buffer, propertyLen uint32) error {
+	mqttutil.EncodeVarUint32(buf, propertyLen)
+	if pa.Properties != nil {
+		return pa.Properties.encode(buf, propertyLen)
+	}
+	return nil
 }
 
 func (pa *PubAck) encode(w io.Writer) error {
-	packet, err := encodePublishResponse(byte(packettype.PUBACK<<4), pa.packetID, byte(pa.ReasonCode), &pa.Properties)
+	packet, err := encodePublishResponse(byte(packettype.PUBACK<<4), pa.packetID, byte(pa.ReasonCode), pa)
 	if err != nil {
 		return err
 	}
@@ -245,11 +292,26 @@ func (code PubRecReasonCode) Desc() string {
 type PubRec struct {
 	packetID   uint16
 	ReasonCode PubRecReasonCode
-	Properties PublishResponseProperties
+	Properties *PublishResponseProperties
 }
 
-func (pa *PubRec) encode(w io.Writer) error {
-	packet, err := encodePublishResponse(byte(packettype.PUBREC<<4), pa.packetID, byte(pa.ReasonCode), &pa.Properties)
+func (pr *PubRec) propertyLength() uint32 {
+	if pr.Properties != nil {
+		return pr.Properties.length()
+	}
+	return 0
+}
+
+func (pr *PubRec) encodeProperties(buf *bytes.Buffer, propertyLen uint32) error {
+	mqttutil.EncodeVarUint32(buf, propertyLen)
+	if pr.Properties != nil {
+		return pr.Properties.encode(buf, propertyLen)
+	}
+	return nil
+}
+
+func (pr *PubRec) encode(w io.Writer) error {
+	packet, err := encodePublishResponse(byte(packettype.PUBREC<<4), pr.packetID, byte(pr.ReasonCode), pr)
 	if err != nil {
 		return err
 	}
@@ -259,15 +321,15 @@ func (pa *PubRec) encode(w io.Writer) error {
 	return err
 }
 
-func (pa *PubRec) decode(r io.Reader, remainingLen uint32) error {
+func (pr *PubRec) decode(r io.Reader, remainingLen uint32) error {
 	id, code, props, err := decodePublishResponse(r, remainingLen)
 	if err != nil {
 		return err
 	}
 
-	pa.packetID = id
-	pa.ReasonCode = PubRecReasonCode(code)
-	pa.Properties = props
+	pr.packetID = id
+	pr.ReasonCode = PubRecReasonCode(code)
+	pr.Properties = props
 
 	return nil
 }
@@ -307,12 +369,27 @@ func (code PubRelReasonCode) Desc() string {
 type PubRel struct {
 	packetID   uint16
 	ReasonCode PubRelReasonCode
-	Properties PublishResponseProperties
+	Properties *PublishResponseProperties
+}
+
+func (pr *PubRel) propertyLength() uint32 {
+	if pr.Properties != nil {
+		return pr.Properties.length()
+	}
+	return 0
+}
+
+func (pr *PubRel) encodeProperties(buf *bytes.Buffer, propertyLen uint32) error {
+	mqttutil.EncodeVarUint32(buf, propertyLen)
+	if pr.Properties != nil {
+		return pr.Properties.encode(buf, propertyLen)
+	}
+	return nil
 }
 
 func (pr *PubRel) encode(w io.Writer) error {
 	const fixedHeader = byte(0x62) // 01100010
-	packet, err := encodePublishResponse(fixedHeader, pr.packetID, byte(pr.ReasonCode), &pr.Properties)
+	packet, err := encodePublishResponse(fixedHeader, pr.packetID, byte(pr.ReasonCode), pr)
 	if err != nil {
 		return err
 	}
@@ -370,11 +447,26 @@ func (code PubCompReasonCode) Desc() string {
 type PubComp struct {
 	packetID   uint16
 	ReasonCode PubCompReasonCode
-	Properties PublishResponseProperties
+	Properties *PublishResponseProperties
+}
+
+func (pc *PubComp) propertyLength() uint32 {
+	if pc.Properties != nil {
+		return pc.Properties.length()
+	}
+	return 0
+}
+
+func (pc *PubComp) encodeProperties(buf *bytes.Buffer, propertyLen uint32) error {
+	mqttutil.EncodeVarUint32(buf, propertyLen)
+	if pc.Properties != nil {
+		return pc.Properties.encode(buf, propertyLen)
+	}
+	return nil
 }
 
 func (pc *PubComp) encode(w io.Writer) error {
-	packet, err := encodePublishResponse(byte(packettype.PUBCOMP<<4), pc.packetID, byte(pc.ReasonCode), &pc.Properties)
+	packet, err := encodePublishResponse(byte(packettype.PUBCOMP<<4), pc.packetID, byte(pc.ReasonCode), pc)
 	if err != nil {
 		return err
 	}

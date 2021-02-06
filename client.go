@@ -41,144 +41,6 @@ type completionNotifier interface {
 // message has been received
 type MessageHandler func(*Publish)
 
-type messageDispatcher struct {
-	recvr   *MessageReceiver
-	handler MessageHandler
-}
-
-func (m *messageDispatcher) run(wg *sync.WaitGroup) {
-	defer wg.Done()
-	for {
-		message, err := m.recvr.Recv()
-		if err != nil {
-			log.Info("Message dispatcher has been closed")
-			return
-		}
-		m.handler(message)
-	}
-}
-
-type clientSubscription struct {
-	subscribe    *Subscribe
-	recvr        *MessageReceiver
-	cbDispatcher *messageDispatcher
-}
-
-type subscriptionCache []*Subscribe
-
-func (sc *subscriptionCache) removeSubscriptionFromCache(topicFilter string) {
-	for i, s := range *sc {
-		var removed bool
-		for j, subscription := range s.Subscriptions {
-			if subscription.TopicFilter == topicFilter {
-				s.Subscriptions = append(s.Subscriptions[:j], s.Subscriptions[j+1:]...)
-				removed = true
-				break
-			}
-		}
-		if len(s.Subscriptions) == 0 {
-			// Remove the whole subscribe
-			*sc = append((*sc)[:i], (*sc)[i+1:]...)
-		}
-		if removed {
-			break
-		}
-	}
-}
-
-func (c *clientSubscription) Finalize() {
-	if c.recvr != nil {
-		c.recvr.close()
-	} else if c.cbDispatcher != nil && c.cbDispatcher.recvr != nil {
-		c.cbDispatcher.recvr.close()
-	}
-}
-
-type packetQueue struct {
-	mu     sync.Mutex
-	data   []packet
-	signal chan struct{}
-}
-
-func newPacketQueue() *packetQueue {
-	return &packetQueue{signal: make(chan struct{}, 1)}
-}
-
-func (p *packetQueue) close() {
-	if p.signal != nil {
-		close(p.signal)
-		p.signal = nil
-	}
-}
-
-func (p *packetQueue) len() int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return len(p.data)
-}
-
-// push adds an item to the queue
-func (p *packetQueue) push(item packet) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.data = append(p.data, item)
-	p.shift()
-}
-
-// shift moves the next available item from the queue into the out channel
-// the out channel value is returned to the user. must be locked by the caller
-func (p *packetQueue) shift() {
-	if len(p.data) > 0 {
-		select {
-		case p.signal <- struct{}{}:
-		default:
-		}
-	}
-}
-
-// pop returns the element and the status of the queue (closed or not)
-func (p *packetQueue) pop() packet {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	var item packet
-	if len(p.data) > 0 {
-		item, p.data = p.data[0], p.data[1:]
-	}
-	p.shift()
-	return item
-}
-
-// clientState represents the data that is used to determine the
-// pending requests, ongoing/incoming messages and the client topic alias
-// mapping. This struct should be used to recover the session state when
-// client needs to be reconnected
-type clientState struct {
-	// as we allow client to publish and (un)subscribe even when not connected
-	// we need to synchronize the data
-	mu                 sync.Mutex
-	connected          bool
-	packetsToSend      chan packet
-	pendingRequests    map[uint16]*request
-	incomingPackets    map[uint16]packet
-	outgoingPackets    map[uint16]packet
-	clientTopicAliases map[uint16]string
-}
-
-type clientStatePacketStore interface {
-	storeOutgoing(id uint16, pkt packet)
-	storeIncoming(id uint16, pkt packet)
-}
-
-func newClientState() *clientState {
-	return &clientState{
-		pendingRequests:    make(map[uint16]*request),
-		incomingPackets:    make(map[uint16]packet),
-		outgoingPackets:    make(map[uint16]packet),
-		clientTopicAliases: make(map[uint16]string),
-		packetsToSend:      make(chan packet, 4),
-	}
-}
-
 // Client represents a client object
 type Client struct {
 	conn                 Connection
@@ -298,6 +160,105 @@ func (c *Client) Off(eventName string, value interface{}) error {
 	return c.eventEmitter.emit(eventName, value)
 }
 
+// Unsubscribe send MQTT UNSUBSCRIBE request to the broker with the give Unsubscribe parameter
+// The function waits for the the MQTT SUBSCRIBE response, SubAck, or for a packet timeout
+func (c *Client) Unsubscribe(ctx context.Context, us *Unsubscribe) (*UnsubAck, error) {
+	for _, topicFilter := range us.TopicFilters {
+		if err := c.topicMatcher.Unsubscribe(topicFilter); err != nil {
+			return nil, err
+		}
+		// remove from subscription cache
+		c.subscriptionCache.removeSubscriptionFromCache(topicFilter)
+	}
+
+	us.packetID = c.pidgenerator.NextID()
+
+	req := &request{pkt: us, result: make(chan interface{})}
+	// add it to ongoing requests
+	c.state.mu.Lock()
+	c.state.pendingRequests[us.packetID] = req
+	// push to the outgoing queue
+	c.state.outgoingPackets[us.packetID] = req.pkt
+	if c.state.connected {
+		c.state.packetsToSend <- req.pkt
+	}
+	c.state.mu.Unlock()
+
+	var result interface{}
+
+	select {
+	case <-ctx.Done():
+		fmt.Println("Error waiting for UNSUBACK ", ctx.Err())
+		return nil, ctx.Err()
+	case result = <-req.result:
+	}
+
+	if unsuback, ok := result.(*UnsubAck); ok {
+		return unsuback, req.err
+	}
+
+	return nil, fmt.Errorf("Internal error during UNSUBSCRIBE, invalid typs received")
+}
+
+// Publish send MQTT PUBLISH packet to the MQTT broker. When the QoS is 1 or 2
+// the function waits for a response from the broker and for QoS 0 the function
+// complets immediatly after the PUBLISH message is schedule to send.
+func (c *Client) Publish(ctx context.Context, p *Publish) error {
+	if err := mqttutil.ValidatePublishTopic(p.TopicName); err != nil {
+		return err
+	}
+
+	if p.Properties != nil && p.Properties.TopicAlias != nil && len(p.TopicName) > 0 {
+		c.state.mu.Lock()
+		// check if topic alias has been set
+		c.state.clientTopicAliases[*p.Properties.TopicAlias] = p.TopicName
+		c.state.mu.Unlock()
+	} else if len(p.TopicName) > 0 && (p.Properties == nil || p.Properties.TopicAlias == nil) {
+		// delete topic alias if the client did a reset
+		c.state.mu.Lock()
+		for k, v := range c.state.clientTopicAliases {
+			if v == p.TopicName {
+				delete(c.state.clientTopicAliases, k)
+				break
+			}
+		}
+		c.state.mu.Unlock()
+	}
+
+	if p.QoSLevel > 0 {
+		p.packetID = c.pidgenerator.NextID()
+
+		req := &request{pkt: p, result: make(chan interface{})}
+		// add it to ongoing requests
+		c.state.mu.Lock()
+		c.state.pendingRequests[p.packetID] = req
+		// push to the outgoing queue
+		c.state.outgoingPackets[p.packetID] = req.pkt
+		if c.state.connected {
+			c.state.packetsToSend <- req.pkt
+		}
+		c.state.mu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			fmt.Println("timeout waiting for PUBLISH ", ctx.Err())
+			return ctx.Err()
+		case _ = <-req.result:
+		}
+		return nil
+	}
+
+	// send QoS0, will be discarded if there is no connection
+	c.state.mu.Lock()
+	defer c.state.mu.Unlock()
+	if c.state.connected {
+		c.state.packetsToSend <- p
+		return nil
+	}
+
+	return fmt.Errorf("Disconnected - QoS0 packets will be discarded")
+}
+
 func (c *Client) subscribe(ctx context.Context, s *clientSubscription) (*SubAck, error) {
 	// add to topic Matcher
 	for _, subscription := range s.subscribe.Subscriptions {
@@ -368,109 +329,6 @@ func (c *Client) resubscribe(ctx context.Context, s *Subscribe) (*SubAck, error)
 	}
 
 	return nil, fmt.Errorf("Internal error during SUBSCRIBE, invalid typs received")
-}
-
-// Unsubscribe send MQTT UNSUBSCRIBE request to the broker with the give Unsubscribe parameter
-// The function waits for the the MQTT SUBSCRIBE response, SubAck, or for a packet timeout
-func (c *Client) Unsubscribe(ctx context.Context, us *Unsubscribe) (*UnsubAck, error) {
-	for _, topicFilter := range us.TopicFilters {
-		if err := c.topicMatcher.Unsubscribe(topicFilter); err != nil {
-			return nil, err
-		}
-		// remove from subscription cache
-		c.subscriptionCache.removeSubscriptionFromCache(topicFilter)
-	}
-
-	us.packetID = c.pidgenerator.NextID()
-
-	req := &request{pkt: us, result: make(chan interface{})}
-	// add it to ongoing requests
-	c.state.mu.Lock()
-	c.state.pendingRequests[us.packetID] = req
-	// push to the outgoing queue
-	c.state.outgoingPackets[us.packetID] = req.pkt
-	if c.state.connected {
-		c.state.packetsToSend <- req.pkt
-	}
-	c.state.mu.Unlock()
-
-	var result interface{}
-
-	select {
-	case <-ctx.Done():
-		fmt.Println("Error waiting for UNSUBACK ", ctx.Err())
-		return nil, ctx.Err()
-	case result = <-req.result:
-	}
-
-	if unsuback, ok := result.(*UnsubAck); ok {
-		return unsuback, req.err
-	}
-
-	return nil, fmt.Errorf("Internal error during UNSUBSCRIBE, invalid typs received")
-}
-
-// Publish send MQTT PUBLISH packet to the MQTT broker. When the QoS is 1 or 2
-// the function waits for a response from the broker and for QoS 0 the function
-// complets immediatly after the PUBLISH message is schedule to send.
-func (c *Client) Publish(ctx context.Context, p *Publish) error {
-	if err := mqttutil.ValidatePublishTopic(p.TopicName); err != nil {
-		return err
-	}
-
-	mapTopicAlias := func() {
-		if p.Properties.TopicAlias != nil && len(p.TopicName) > 0 {
-			c.state.mu.Lock()
-			// check if topic alias has been set
-			c.state.clientTopicAliases[*p.Properties.TopicAlias] = p.TopicName
-			c.state.mu.Unlock()
-		} else if len(p.TopicName) > 0 && p.Properties.TopicAlias == nil {
-			// delete topic alias if the client did a reset
-			c.state.mu.Lock()
-			for k, v := range c.state.clientTopicAliases {
-				if v == p.TopicName {
-					delete(c.state.clientTopicAliases, k)
-					break
-				}
-			}
-			c.state.mu.Unlock()
-		}
-	}
-
-	if p.QoSLevel > 0 {
-		p.packetID = c.pidgenerator.NextID()
-
-		req := &request{pkt: p, result: make(chan interface{})}
-		// add it to ongoing requests
-		c.state.mu.Lock()
-		c.state.pendingRequests[p.packetID] = req
-		// push to the outgoing queue
-		c.state.outgoingPackets[p.packetID] = req.pkt
-		if c.state.connected {
-			c.state.packetsToSend <- req.pkt
-		}
-		c.state.mu.Unlock()
-
-		select {
-		case <-ctx.Done():
-			fmt.Println("timeout waiting for PUBLISH ", ctx.Err())
-			return ctx.Err()
-		case _ = <-req.result:
-			mapTopicAlias()
-		}
-		return nil
-	}
-
-	// send QoS0, will be discarded if there is no connection
-	c.state.mu.Lock()
-	defer c.state.mu.Unlock()
-	if c.state.connected {
-		c.state.packetsToSend <- p
-		mapTopicAlias()
-		return nil
-	}
-
-	return fmt.Errorf("Disconnected - QoS0 packets will be discarded")
 }
 
 func (c *Client) messageDispatcher() error {
@@ -613,7 +471,7 @@ func (c *Client) restoreState(ph *protocolHandler, connack *ConnAck, sem *semaph
 		publishPkt, ok := pkt.(*Publish)
 		if ok {
 			// add check for topic alias
-			if publishPkt.Properties.TopicAlias != nil && len(publishPkt.TopicName) == 0 {
+			if publishPkt.Properties != nil && publishPkt.Properties.TopicAlias != nil && len(publishPkt.TopicName) == 0 {
 				// check whether we have a topic associated
 				if v, ok := c.state.clientTopicAliases[*publishPkt.Properties.TopicAlias]; ok {
 					// check if it is alread set
@@ -642,7 +500,7 @@ func (c *Client) protocolHandler(ph *protocolHandler, connAckPkt *ConnAck) {
 	var semServerRecvMax *semaphore.Weighted
 	onconnected := func() []packet {
 		defaultRecvMax := 65535
-		if connAckPkt.Properties.ReceiveMaximum != nil {
+		if connAckPkt.Properties != nil && connAckPkt.Properties.ReceiveMaximum != nil {
 			defaultRecvMax = int(*(connAckPkt.Properties.ReceiveMaximum))
 		}
 		// if the session is present then we should preserve the state,
@@ -876,7 +734,7 @@ func (c *protocolHandler) connect(mqttConnect *Connect) (*ConnAck, error) {
 	}
 
 	// if there is keep alive timeout in CONNACK use that value as timeout
-	if connAckPkt.Properties.ServerKeepAlive != nil {
+	if connAckPkt.Properties != nil && connAckPkt.Properties.ServerKeepAlive != nil {
 		c.keepAliveTimeout = time.Duration(*connAckPkt.Properties.ServerKeepAlive) * time.Second
 	} else {
 		c.keepAliveTimeout = time.Duration(mqttConnect.KeepAlive) * time.Second
@@ -1134,4 +992,142 @@ func (c *protocolHandler) sendPacket(pkt packet) error {
 		return err
 	}
 	return writer.Flush()
+}
+
+type messageDispatcher struct {
+	recvr   *MessageReceiver
+	handler MessageHandler
+}
+
+func (m *messageDispatcher) run(wg *sync.WaitGroup) {
+	defer wg.Done()
+	for {
+		message, err := m.recvr.Recv()
+		if err != nil {
+			log.Info("Message dispatcher has been closed")
+			return
+		}
+		m.handler(message)
+	}
+}
+
+type clientSubscription struct {
+	subscribe    *Subscribe
+	recvr        *MessageReceiver
+	cbDispatcher *messageDispatcher
+}
+
+type subscriptionCache []*Subscribe
+
+func (sc *subscriptionCache) removeSubscriptionFromCache(topicFilter string) {
+	for i, s := range *sc {
+		var removed bool
+		for j, subscription := range s.Subscriptions {
+			if subscription.TopicFilter == topicFilter {
+				s.Subscriptions = append(s.Subscriptions[:j], s.Subscriptions[j+1:]...)
+				removed = true
+				break
+			}
+		}
+		if len(s.Subscriptions) == 0 {
+			// Remove the whole subscribe
+			*sc = append((*sc)[:i], (*sc)[i+1:]...)
+		}
+		if removed {
+			break
+		}
+	}
+}
+
+func (c *clientSubscription) Finalize() {
+	if c.recvr != nil {
+		c.recvr.close()
+	} else if c.cbDispatcher != nil && c.cbDispatcher.recvr != nil {
+		c.cbDispatcher.recvr.close()
+	}
+}
+
+type packetQueue struct {
+	mu     sync.Mutex
+	data   []packet
+	signal chan struct{}
+}
+
+func newPacketQueue() *packetQueue {
+	return &packetQueue{signal: make(chan struct{}, 1)}
+}
+
+func (p *packetQueue) close() {
+	if p.signal != nil {
+		close(p.signal)
+		p.signal = nil
+	}
+}
+
+func (p *packetQueue) len() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.data)
+}
+
+// push adds an item to the queue
+func (p *packetQueue) push(item packet) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.data = append(p.data, item)
+	p.shift()
+}
+
+// shift moves the next available item from the queue into the out channel
+// the out channel value is returned to the user. must be locked by the caller
+func (p *packetQueue) shift() {
+	if len(p.data) > 0 {
+		select {
+		case p.signal <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// pop returns the element and the status of the queue (closed or not)
+func (p *packetQueue) pop() packet {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var item packet
+	if len(p.data) > 0 {
+		item, p.data = p.data[0], p.data[1:]
+	}
+	p.shift()
+	return item
+}
+
+// clientState represents the data that is used to determine the
+// pending requests, ongoing/incoming messages and the client topic alias
+// mapping. This struct should be used to recover the session state when
+// client needs to be reconnected
+type clientState struct {
+	// as we allow client to publish and (un)subscribe even when not connected
+	// we need to synchronize the data
+	mu                 sync.Mutex
+	connected          bool
+	packetsToSend      chan packet
+	pendingRequests    map[uint16]*request
+	incomingPackets    map[uint16]packet
+	outgoingPackets    map[uint16]packet
+	clientTopicAliases map[uint16]string
+}
+
+type clientStatePacketStore interface {
+	storeOutgoing(id uint16, pkt packet)
+	storeIncoming(id uint16, pkt packet)
+}
+
+func newClientState() *clientState {
+	return &clientState{
+		pendingRequests:    make(map[uint16]*request),
+		incomingPackets:    make(map[uint16]packet),
+		outgoingPackets:    make(map[uint16]packet),
+		clientTopicAliases: make(map[uint16]string),
+		packetsToSend:      make(chan packet, 4),
+	}
 }

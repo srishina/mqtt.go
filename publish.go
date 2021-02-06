@@ -36,8 +36,6 @@ func (pp *PublishProperties) length() uint32 {
 }
 
 func (pp *PublishProperties) encode(buf *bytes.Buffer, propertyLen uint32) error {
-	mqttutil.EncodeVarUint32(buf, propertyLen)
-
 	if err := properties.Encoder.FromBool(
 		buf, properties.PayloadFormatIndicatorID, pp.PayloadFormatIndicator); err != nil {
 		return err
@@ -81,10 +79,9 @@ func (pp *PublishProperties) encode(buf *bytes.Buffer, propertyLen uint32) error
 	return nil
 }
 
-func (pp *PublishProperties) decode(r io.Reader) error {
+func (pp *PublishProperties) decode(r io.Reader, propertyLen uint32) error {
 	var id uint32
-
-	propertyLen, _, err := mqttutil.DecodeVarUint32(r)
+	var err error
 	for err == nil && propertyLen > 0 {
 		id, _, err = mqttutil.DecodeVarUint32(r)
 		if err != nil {
@@ -150,12 +147,40 @@ type Publish struct {
 	Retain     bool
 	TopicName  string
 	packetID   uint16
-	Properties PublishProperties
+	Properties *PublishProperties
 	Payload    []byte
 }
 
+func (p *Publish) propertyLength() uint32 {
+	if p.Properties != nil {
+		return p.Properties.length()
+	}
+	return 0
+}
+
+func (p *Publish) encodeProperties(buf *bytes.Buffer, propertyLen uint32) error {
+	mqttutil.EncodeVarUint32(buf, propertyLen)
+	if p.Properties != nil {
+		return p.Properties.encode(buf, propertyLen)
+	}
+	return nil
+}
+
+func (p *Publish) decodeProperties(r io.Reader) error {
+	propertyLen, _, err := mqttutil.DecodeVarUint32(r)
+	if err != nil {
+		return err
+	}
+	if propertyLen > 0 {
+		p.Properties = &PublishProperties{}
+		return p.Properties.decode(r, propertyLen)
+	}
+
+	return nil
+}
+
 func (p *Publish) encode(w io.Writer) error {
-	propertyLen := p.Properties.length()
+	propertyLen := p.propertyLength()
 	// calculate the remaining length
 	remainingLength := propertyLen + mqttutil.EncodedVarUint32Size(propertyLen)
 	remainingLength += uint32(len(p.TopicName) + 2 + len(p.Payload))
@@ -183,7 +208,7 @@ func (p *Publish) encode(w io.Writer) error {
 	}
 
 	// publish properties
-	if err := p.Properties.encode(&packet, propertyLen); err != nil {
+	if err := p.encodeProperties(&packet, propertyLen); err != nil {
 		return err
 	}
 
@@ -219,12 +244,12 @@ func (p *Publish) decode(r io.Reader, remainingLen uint32) error {
 	}
 
 	// publish properties
-	err = p.Properties.decode(r)
+	err = p.decodeProperties(r)
 	if err != nil {
 		return err
 	}
 
-	propertyLen := p.Properties.length()
+	propertyLen := p.propertyLength()
 	remainingLen -= propertyLen + mqttutil.EncodedVarUint32Size(propertyLen)
 
 	// publish payload

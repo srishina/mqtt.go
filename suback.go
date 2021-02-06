@@ -78,7 +78,7 @@ type SubAckProperties struct {
 	UserProperty map[string]string
 }
 
-func (sp *SubAckProperties) propertyLen() uint32 {
+func (sp *SubAckProperties) length() uint32 {
 	propertyLen := uint32(0)
 	propertyLen += properties.EncodedSize.FromUTF8String(sp.ReasonString)
 	propertyLen += properties.EncodedSize.FromUTF8StringPair(sp.UserProperty)
@@ -86,8 +86,6 @@ func (sp *SubAckProperties) propertyLen() uint32 {
 }
 
 func (sp *SubAckProperties) encode(buf *bytes.Buffer, propertyLen uint32) error {
-	mqttutil.EncodeVarUint32(buf, propertyLen)
-
 	if err := properties.Encoder.FromUTF8String(
 		buf, properties.ReasonStringID, sp.ReasonString); err != nil {
 		return err
@@ -101,9 +99,9 @@ func (sp *SubAckProperties) encode(buf *bytes.Buffer, propertyLen uint32) error 
 	return nil
 }
 
-func (sp *SubAckProperties) decode(r io.Reader) error {
+func (sp *SubAckProperties) decode(r io.Reader, propertyLen uint32) error {
 	var id uint32
-	propertyLen, _, err := mqttutil.DecodeVarUint32(r)
+	var err error
 	for err == nil && propertyLen > 0 {
 		id, _, err = mqttutil.DecodeVarUint32(r)
 		if err != nil {
@@ -138,13 +136,41 @@ func (sp *SubAckProperties) decode(r io.Reader) error {
 // SubAck MQTT SUBACK packet
 type SubAck struct {
 	packetID    uint16
-	Properties  SubAckProperties
+	Properties  *SubAckProperties
 	ReasonCodes []SubAckReasonCode
+}
+
+func (s *SubAck) propertyLength() uint32 {
+	if s.Properties != nil {
+		return s.Properties.length()
+	}
+	return 0
+}
+
+func (s *SubAck) encodeProperties(buf *bytes.Buffer, propertyLen uint32) error {
+	mqttutil.EncodeVarUint32(buf, propertyLen)
+	if s.Properties != nil {
+		return s.Properties.encode(buf, propertyLen)
+	}
+	return nil
+}
+
+func (s *SubAck) decodeProperties(r io.Reader) error {
+	propertyLen, _, err := mqttutil.DecodeVarUint32(r)
+	if err != nil {
+		return err
+	}
+	if propertyLen > 0 {
+		s.Properties = &SubAckProperties{}
+		return s.Properties.decode(r, propertyLen)
+	}
+
+	return nil
 }
 
 // encode encode the SUBACK packet
 func (s *SubAck) encode(w io.Writer) error {
-	propertyLen := s.Properties.propertyLen()
+	propertyLen := s.propertyLength()
 	// calculate the remaining length
 	// 2 = session present + reason code
 	remainingLength := 2 + propertyLen + mqttutil.EncodedVarUint32Size(propertyLen) + uint32(len(s.ReasonCodes))
@@ -157,7 +183,7 @@ func (s *SubAck) encode(w io.Writer) error {
 		return err
 	}
 
-	if err := s.Properties.encode(&packet, propertyLen); err != nil {
+	if err := s.encodeProperties(&packet, propertyLen); err != nil {
 		return err
 	}
 
@@ -178,12 +204,12 @@ func (s *SubAck) decode(r io.Reader, remainingLen uint32) error {
 		return err
 	}
 
-	err = s.Properties.decode(r)
+	err = s.decodeProperties(r)
 	if err != nil {
 		return err
 	}
 
-	propertyLen := s.Properties.propertyLen()
+	propertyLen := s.propertyLength()
 	remainingLen -= uint32(2 + propertyLen + mqttutil.EncodedVarUint32Size(propertyLen))
 	payload, _, err := mqttutil.DecodeBinaryDataNoLength(r, int(remainingLen))
 	for _, p := range payload {

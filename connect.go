@@ -39,7 +39,7 @@ const topicAliasMaximumDefault uint16 = 0
 const requestProblemInfoDefault bool = true
 const requestResponseInfoDefault bool = false
 
-func (cp *ConnectProperties) propertyLen() uint32 {
+func (cp *ConnectProperties) length() uint32 {
 	propertyLen := uint32(0)
 
 	propertyLen += properties.EncodedSize.FromUint32(cp.SessionExpiryInterval)
@@ -56,8 +56,6 @@ func (cp *ConnectProperties) propertyLen() uint32 {
 }
 
 func (cp *ConnectProperties) encode(buf *bytes.Buffer, propertyLen uint32) error {
-	mqttutil.EncodeVarUint32(buf, propertyLen)
-
 	if err := properties.Encoder.FromUint32(
 		buf, properties.SessionExpiryIntervalID, cp.SessionExpiryInterval); err != nil {
 		return err
@@ -106,28 +104,36 @@ func (cp *ConnectProperties) encode(buf *bytes.Buffer, propertyLen uint32) error
 	return nil
 }
 
-func (cp *ConnectProperties) decode(r io.Reader) error {
+func (cp *ConnectProperties) decode(r io.Reader, propertyLen uint32) error {
+
 	var id uint32
-	propertyLen, _, err := mqttutil.DecodeVarUint32(r)
+	var err error
 	for err == nil && propertyLen > 0 {
 		id, _, err = mqttutil.DecodeVarUint32(r)
 		if err != nil {
 			return err
 		}
 		propID := properties.PropertyID(id)
+		propertyLen -= mqttutil.EncodedVarUint32Size(id)
 		switch propID {
 		case properties.SessionExpiryIntervalID:
 			cp.SessionExpiryInterval, err = properties.DecoderOnlyOnce.ToUint32(r, propID, cp.SessionExpiryInterval)
+			propertyLen -= 4
 		case properties.ReceiveMaximumID:
 			cp.ReceiveMaximum, err = properties.DecoderOnlyOnce.ToUint16(r, propID, cp.ReceiveMaximum)
+			propertyLen -= 2
 		case properties.MaximumPacketSizeID:
 			cp.MaximumPacketSize, err = properties.DecoderOnlyOnce.ToUint32(r, propID, cp.MaximumPacketSize)
+			propertyLen -= 4
 		case properties.TopicAliasMaximumID:
 			cp.TopicAliasMaximum, err = properties.DecoderOnlyOnce.ToUint16(r, propID, cp.TopicAliasMaximum)
+			propertyLen -= 2
 		case properties.RequestProblemInfoID:
 			cp.RequestProblemInfo, err = properties.DecoderOnlyOnce.ToBool(r, propID, cp.RequestProblemInfo)
+			propertyLen--
 		case properties.RequestResponseInfoID:
 			cp.RequestResponseInfo, err = properties.DecoderOnlyOnce.ToBool(r, propID, cp.RequestResponseInfo)
+			propertyLen--
 		case properties.UserPropertyID:
 			if cp.UserProperty == nil {
 				cp.UserProperty = make(map[string]string)
@@ -139,11 +145,13 @@ func (cp *ConnectProperties) decode(r io.Reader) error {
 			}
 
 			cp.UserProperty[key] = value
-
+			propertyLen -= uint32(len(key) + len(value) + 4)
 		case properties.AuthenticationMethodID:
 			cp.AuthenticationMethod, err = properties.DecoderOnlyOnce.ToUTF8String(r, propID, cp.AuthenticationMethod)
+			propertyLen -= uint32(len(cp.AuthenticationMethod) + 2)
 		case properties.AuthenticationDataID:
 			cp.AuthenticationData, err = properties.DecoderOnlyOnce.ToBinaryData(r, propID, cp.AuthenticationData)
+			propertyLen -= uint32(len(cp.AuthenticationData) + 2)
 		}
 	}
 
@@ -156,15 +164,43 @@ type Connect struct {
 	protocolVersion byte
 	CleanStart      bool
 	KeepAlive       uint16
-	Properties      ConnectProperties
+	Properties      *ConnectProperties
 	ClientID        string
 	UserName        string
 	Password        []byte
 }
 
+func (c *Connect) propertyLength() uint32 {
+	if c.Properties != nil {
+		return c.Properties.length()
+	}
+	return 0
+}
+
+func (c *Connect) encodeProperties(buf *bytes.Buffer, propertyLen uint32) error {
+	mqttutil.EncodeVarUint32(buf, propertyLen)
+	if c.Properties != nil {
+		return c.Properties.encode(buf, propertyLen)
+	}
+	return nil
+}
+
+func (c *Connect) decodeProperties(r io.Reader) error {
+	propertyLen, _, err := mqttutil.DecodeVarUint32(r)
+	if err != nil {
+		return err
+	}
+	if propertyLen > 0 {
+		c.Properties = &ConnectProperties{}
+		return c.Properties.decode(r, propertyLen)
+	}
+
+	return nil
+}
+
 // encode encode the Connect packet and perform protocol validation
 func (c *Connect) encode(w io.Writer) error {
-	propertyLen := c.Properties.propertyLen()
+	propertyLen := c.propertyLength()
 	// calculate the remaining length
 	// 10 = protocolname + version + flags + keepalive
 	remainingLength := 10 + propertyLen + mqttutil.EncodedVarUint32Size(propertyLen) + uint32(2+len(c.ClientID))
@@ -201,7 +237,7 @@ func (c *Connect) encode(w io.Writer) error {
 		return err
 	}
 
-	if err := c.Properties.encode(&packet, propertyLen); err != nil {
+	if err := c.encodeProperties(&packet, propertyLen); err != nil {
 		return err
 	}
 
@@ -260,7 +296,7 @@ func (c *Connect) decode(r io.Reader, remainingLen uint32) error {
 		return err
 	}
 
-	err = c.Properties.decode(r)
+	err = c.decodeProperties(r)
 	if err != nil {
 		return err
 	}
