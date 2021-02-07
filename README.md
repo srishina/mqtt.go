@@ -25,7 +25,7 @@ cd ./examples
 
 Connect to a broker(basic client):
 ```bash
-go run ./client-pub/main.go -b ws://mqtt.eclipseprojects.io:80/mqtt -k 120 -cs=true // keep alive = 120secs, clean start=true
+go run ./basic-client/main.go -b ws://mqtt.eclipseprojects.io:80/mqtt -k 120 -cs=true // keep alive = 120secs, clean start=true
 ```
 Publish a message:
 ```bash
@@ -33,5 +33,5 @@ go run ./client-pub/main.go -b ws://mqtt.eclipseprojects.io:80/mqtt "TEST/GREETI
 ```
 Subscribe to a message:
 ```bash
-go run main.go -b ws://mqtt.eclipseprojects.io:80/mqtt "TEST/GREETING/#" 1
+go run ./client-sub/main.go -b ws://mqtt.eclipseprojects.io:80/mqtt "TEST/GREETING/#" 1
 ```
