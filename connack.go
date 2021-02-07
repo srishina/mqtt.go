@@ -158,12 +158,12 @@ func (cp *ConnAckProperties) encode(buf *bytes.Buffer, propertyLen uint32) error
 	}
 
 	if err := properties.Encoder.FromByte(
-		buf, properties.ReceiveMaximumID, cp.MaximumQoS); err != nil {
+		buf, properties.MaximumQoSID, cp.MaximumQoS); err != nil {
 		return err
 	}
 
 	if err := properties.Encoder.FromBool(
-		buf, properties.ReceiveMaximumID, cp.RetainAvailable); err != nil {
+		buf, properties.RetainAvailableID, cp.RetainAvailable); err != nil {
 		return err
 	}
 
@@ -354,6 +354,7 @@ func (c *ConnAck) decodeProperties(r io.Reader) error {
 	if err != nil {
 		return err
 	}
+
 	if propertyLen > 0 {
 		c.Properties = &ConnAckProperties{}
 		return c.Properties.decode(r, propertyLen)

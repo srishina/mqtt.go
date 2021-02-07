@@ -546,11 +546,6 @@ func (c *Client) protocolHandler(ph *protocolHandler, connAckPkt *ConnAck) {
 		var d packet
 		select {
 		case d = <-c.disconnectPkt:
-			select {
-			case <-c.stop:
-				stopping = true
-			default:
-			}
 		case <-c.stop:
 			select {
 			case d = <-c.disconnectPkt:
@@ -588,6 +583,10 @@ func (c *Client) protocolHandler(ph *protocolHandler, connAckPkt *ConnAck) {
 		if d != nil {
 			if err := ph.sendPacket(d); err != nil {
 				log.Warnf("Client is stopping, failed to send DISCONNECT message to broker error %v", err)
+			}
+			// we received the disconnect pkt signal, but not stop
+			if !stopping {
+				continue
 			}
 		}
 

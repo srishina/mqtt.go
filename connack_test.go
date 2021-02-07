@@ -66,12 +66,12 @@ func TestCodecConnAckPacketWithProperties(t *testing.T) {
 	encoded := []byte{0x20, 0x0B,
 		0x01,                                 // session present
 		byte(ConnAckReasonCodeNotAuthorized), // Reason code
-		0x09,                                 // properties
-		byte(properties.TopicAliasMaximumID),
+		0x08,                                 // properties
+		byte(properties.ReceiveMaximumID),
 		0x00, 0x0A, // receive maximum
 		byte(properties.MaximumQoSID),
 		0x01, // max qos = 1
-		byte(properties.ReceiveMaximumID),
+		byte(properties.TopicAliasMaximumID),
 		0x00, 0x0A, // receive maximum
 	}
 
@@ -80,7 +80,7 @@ func TestCodecConnAckPacketWithProperties(t *testing.T) {
 	require.NoError(t, err, "Decoding CONNACK fixed header returned error")
 
 	require.Equal(t, packettype.CONNACK, packettype.PacketType(byte0>>4))
-	require.Equal(t, uint32(0x0C), remainingLength)
+	require.Equal(t, uint32(0x0B), remainingLength)
 
 	ca := ConnAck{}
 	err = ca.decode(reader, remainingLength)

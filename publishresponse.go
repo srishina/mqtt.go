@@ -163,11 +163,6 @@ func encodePublishResponse(byte0 byte, id uint16, code byte, propEncoder publish
 			return nil, err
 		}
 		if remainingLength > 3 {
-			// we have properties
-			if err := mqttutil.EncodeVarUint32(&packet, propertyLen); err != nil {
-				return nil, err
-			}
-
 			if err := propEncoder.encodeProperties(&packet, propertyLen); err != nil {
 				return nil, err
 			}
