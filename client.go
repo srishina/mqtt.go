@@ -46,6 +46,7 @@ type Client struct {
 	conn                 Connection
 	options              clientOptions
 	mqttConnPkt          *Connect
+	assignedClientID     string
 	store                Store
 	pidgenerator         *mqttutil.PIDGenerator
 	topicMatcher         *mqttutil.TopicMatcher
@@ -361,6 +362,16 @@ func (c *Client) messageDispatcher() error {
 	return nil
 }
 
+func (c *Client) reconnect(ctx context.Context) (*protocolHandler, *ConnAck, error) {
+	if len(c.assignedClientID) != 0 {
+		c.mqttConnPkt.ClientID = c.assignedClientID
+	}
+	// set the clean session to false
+	c.mqttConnPkt.CleanStart = false
+
+	return c.connect(ctx)
+}
+
 func (c *Client) connect(ctx context.Context) (*protocolHandler, *ConnAck, error) {
 	// dial and wait for a connection to succeed or error
 	rw, err := c.conn.Connect(ctx)
@@ -397,6 +408,11 @@ func (c *Client) connect(ctx context.Context) (*protocolHandler, *ConnAck, error
 
 	if err != nil {
 		return nil, nil, err
+	}
+
+	// use the client identifier in connack packet if there is one
+	if connAckPkt.Properties != nil && len(connAckPkt.Properties.AssignedClientIdentifier) != 0 {
+		c.assignedClientID = connAckPkt.Properties.AssignedClientIdentifier
 	}
 
 	// signal when operation like Publish, Subscribe, Unsubscribe completes
@@ -607,7 +623,7 @@ func (c *Client) protocolHandler(ph *protocolHandler, connAckPkt *ConnAck) {
 		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
-			ph, connack, err = c.connect(reconnectCtx)
+			ph, connack, err = c.reconnect(reconnectCtx)
 			pendingQoS12PublishPackets = onconnected()
 			close(reconnected)
 		}()
