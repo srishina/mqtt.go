@@ -73,7 +73,10 @@ func (us *Unsubscribe) propertyLength() uint32 {
 }
 
 func (us *Unsubscribe) encodeProperties(buf *bytes.Buffer, propertyLen uint32) error {
-	mqttutil.EncodeVarUint32(buf, propertyLen)
+	if err := mqttutil.EncodeVarUint32(buf, propertyLen); err != nil {
+		return err
+	}
+
 	if us.Properties != nil {
 		return us.Properties.encode(buf, propertyLen)
 	}
@@ -109,8 +112,13 @@ func (us *Unsubscribe) encode(w io.Writer) error {
 
 	var packet bytes.Buffer
 	packet.Grow(int(1 + remainingLength + mqttutil.EncodedVarUint32Size(remainingLength)))
-	mqttutil.EncodeByte(&packet, fixedHeader)
-	mqttutil.EncodeVarUint32(&packet, remainingLength)
+	if err := mqttutil.EncodeByte(&packet, fixedHeader); err != nil {
+		return err
+	}
+
+	if err := mqttutil.EncodeVarUint32(&packet, remainingLength); err != nil {
+		return err
+	}
 
 	if err := mqttutil.EncodeBigEndianUint16(&packet, us.packetID); err != nil {
 		return err

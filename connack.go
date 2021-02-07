@@ -339,7 +339,10 @@ func (c *ConnAck) propertyLength() uint32 {
 }
 
 func (c *ConnAck) encodeProperties(buf *bytes.Buffer, propertyLen uint32) error {
-	mqttutil.EncodeVarUint32(buf, propertyLen)
+	if err := mqttutil.EncodeVarUint32(buf, propertyLen); err != nil {
+		return err
+	}
+
 	if c.Properties != nil {
 		return c.Properties.encode(buf, propertyLen)
 	}
@@ -368,8 +371,13 @@ func (c *ConnAck) encode(w io.Writer) error {
 	remainingLength := 2 + propertyLen + mqttutil.EncodedVarUint32Size(propertyLen)
 	var packet bytes.Buffer
 	packet.Grow(int(1 + remainingLength + mqttutil.EncodedVarUint32Size(remainingLength)))
-	mqttutil.EncodeByte(&packet, byte(packettype.CONNACK<<4))
-	mqttutil.EncodeVarUint32(&packet, remainingLength)
+	if err := mqttutil.EncodeByte(&packet, byte(packettype.CONNACK<<4)); err != nil {
+		return err
+	}
+
+	if err := mqttutil.EncodeVarUint32(&packet, remainingLength); err != nil {
+		return err
+	}
 
 	if err := mqttutil.EncodeBool(&packet, c.SessionPresent); err != nil {
 		return err

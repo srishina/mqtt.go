@@ -159,7 +159,10 @@ func (p *Publish) propertyLength() uint32 {
 }
 
 func (p *Publish) encodeProperties(buf *bytes.Buffer, propertyLen uint32) error {
-	mqttutil.EncodeVarUint32(buf, propertyLen)
+	if err := mqttutil.EncodeVarUint32(buf, propertyLen); err != nil {
+		return err
+	}
+
 	if p.Properties != nil {
 		return p.Properties.encode(buf, propertyLen)
 	}
@@ -191,8 +194,13 @@ func (p *Publish) encode(w io.Writer) error {
 	var packet bytes.Buffer
 	packet.Grow(int(1 + remainingLength + mqttutil.EncodedVarUint32Size(remainingLength)))
 	byte0 := byte(packettype.PUBLISH<<4) | mqttutil.BoolToByte(p.DUPFlag)<<3 | p.QoSLevel<<1 | mqttutil.BoolToByte(p.Retain)
-	mqttutil.EncodeByte(&packet, byte0)
-	mqttutil.EncodeVarUint32(&packet, remainingLength)
+	if err := mqttutil.EncodeByte(&packet, byte0); err != nil {
+		return err
+	}
+
+	if err := mqttutil.EncodeVarUint32(&packet, remainingLength); err != nil {
+		return err
+	}
 
 	// Write topic name
 	if err := mqttutil.EncodeUTF8String(&packet, p.TopicName); err != nil {

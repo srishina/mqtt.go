@@ -204,7 +204,10 @@ func (d *Disconnect) propertyLength() uint32 {
 }
 
 func (d *Disconnect) encodeProperties(buf *bytes.Buffer, propertyLen uint32) error {
-	mqttutil.EncodeVarUint32(buf, propertyLen)
+	if err := mqttutil.EncodeVarUint32(buf, propertyLen); err != nil {
+		return err
+	}
+
 	if d.Properties != nil {
 		return d.Properties.encode(buf, propertyLen)
 	}
@@ -232,8 +235,13 @@ func (d *Disconnect) encode(w io.Writer) error {
 	remainingLength := 1 + propertyLen + mqttutil.EncodedVarUint32Size(propertyLen)
 	var packet bytes.Buffer
 	packet.Grow(int(1 + remainingLength + mqttutil.EncodedVarUint32Size(remainingLength)))
-	mqttutil.EncodeByte(&packet, byte(packettype.DISCONNECT<<4))
-	mqttutil.EncodeVarUint32(&packet, remainingLength)
+	if err := mqttutil.EncodeByte(&packet, byte(packettype.DISCONNECT<<4)); err != nil {
+		return err
+	}
+
+	if err := mqttutil.EncodeVarUint32(&packet, remainingLength); err != nil {
+		return err
+	}
 
 	if err := mqttutil.EncodeByte(&packet, byte(d.ReasonCode)); err != nil {
 		return err

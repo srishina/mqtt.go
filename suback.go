@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"unsafe"
 
 	"github.com/srishina/mqtt.go/internal/mqttutil"
 	"github.com/srishina/mqtt.go/internal/packettype"
@@ -148,7 +147,10 @@ func (s *SubAck) propertyLength() uint32 {
 }
 
 func (s *SubAck) encodeProperties(buf *bytes.Buffer, propertyLen uint32) error {
-	mqttutil.EncodeVarUint32(buf, propertyLen)
+	if err := mqttutil.EncodeVarUint32(buf, propertyLen); err != nil {
+		return err
+	}
+
 	if s.Properties != nil {
 		return s.Properties.encode(buf, propertyLen)
 	}
@@ -176,8 +178,13 @@ func (s *SubAck) encode(w io.Writer) error {
 	remainingLength := 2 + propertyLen + mqttutil.EncodedVarUint32Size(propertyLen) + uint32(len(s.ReasonCodes))
 	var packet bytes.Buffer
 	packet.Grow(int(1 + remainingLength + mqttutil.EncodedVarUint32Size(remainingLength)))
-	mqttutil.EncodeByte(&packet, byte(packettype.SUBACK<<4))
-	mqttutil.EncodeVarUint32(&packet, remainingLength)
+	if err := mqttutil.EncodeByte(&packet, byte(packettype.SUBACK<<4)); err != nil {
+		return err
+	}
+
+	if err := mqttutil.EncodeVarUint32(&packet, remainingLength); err != nil {
+		return err
+	}
 
 	if err := mqttutil.EncodeBigEndianUint16(&packet, s.packetID); err != nil {
 		return err
@@ -187,9 +194,12 @@ func (s *SubAck) encode(w io.Writer) error {
 		return err
 	}
 
-	if err := mqttutil.EncodeBinaryDataNoLen(&packet, *(*[]byte)(unsafe.Pointer(&s.ReasonCodes))); err != nil {
-		return err
+	for _, b := range s.ReasonCodes {
+		if err := mqttutil.EncodeByte(&packet, byte(b)); err != nil {
+			return err
+		}
 	}
+
 	_, err := packet.WriteTo(w)
 
 	return err

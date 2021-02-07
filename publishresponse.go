@@ -145,8 +145,13 @@ func encodePublishResponse(byte0 byte, id uint16, code byte, propEncoder publish
 
 	var packet bytes.Buffer
 	packet.Grow(int(1 + remainingLength + mqttutil.EncodedVarUint32Size(remainingLength)))
-	mqttutil.EncodeByte(&packet, byte0)
-	mqttutil.EncodeVarUint32(&packet, remainingLength)
+	if err := mqttutil.EncodeByte(&packet, byte0); err != nil {
+		return nil, err
+	}
+
+	if err := mqttutil.EncodeVarUint32(&packet, remainingLength); err != nil {
+		return nil, err
+	}
 
 	if err := mqttutil.EncodeBigEndianUint16(&packet, id); err != nil {
 		return nil, err
@@ -159,7 +164,10 @@ func encodePublishResponse(byte0 byte, id uint16, code byte, propEncoder publish
 		}
 		if remainingLength > 3 {
 			// we have properties
-			mqttutil.EncodeVarUint32(&packet, propertyLen)
+			if err := mqttutil.EncodeVarUint32(&packet, propertyLen); err != nil {
+				return nil, err
+			}
+
 			if err := propEncoder.encodeProperties(&packet, propertyLen); err != nil {
 				return nil, err
 			}
@@ -203,7 +211,10 @@ func decodePublishResponse(r io.Reader, remainingLen uint32) (uint16, byte, *Pub
 			}
 			if propertyLen > 0 {
 				props = &PublishResponseProperties{}
-				props.decode(r, propertyLen)
+				err := props.decode(r, propertyLen)
+				if err != nil {
+					return 0, 0, nil, err
+				}
 			}
 		}
 	}
@@ -231,7 +242,10 @@ func (pa *PubAck) propertyLength() uint32 {
 }
 
 func (pa *PubAck) encodeProperties(buf *bytes.Buffer, propertyLen uint32) error {
-	mqttutil.EncodeVarUint32(buf, propertyLen)
+	if err := mqttutil.EncodeVarUint32(buf, propertyLen); err != nil {
+		return err
+	}
+
 	if pa.Properties != nil {
 		return pa.Properties.encode(buf, propertyLen)
 	}
@@ -303,7 +317,10 @@ func (pr *PubRec) propertyLength() uint32 {
 }
 
 func (pr *PubRec) encodeProperties(buf *bytes.Buffer, propertyLen uint32) error {
-	mqttutil.EncodeVarUint32(buf, propertyLen)
+	if err := mqttutil.EncodeVarUint32(buf, propertyLen); err != nil {
+		return err
+	}
+
 	if pr.Properties != nil {
 		return pr.Properties.encode(buf, propertyLen)
 	}
@@ -380,7 +397,10 @@ func (pr *PubRel) propertyLength() uint32 {
 }
 
 func (pr *PubRel) encodeProperties(buf *bytes.Buffer, propertyLen uint32) error {
-	mqttutil.EncodeVarUint32(buf, propertyLen)
+	if err := mqttutil.EncodeVarUint32(buf, propertyLen); err != nil {
+		return err
+	}
+
 	if pr.Properties != nil {
 		return pr.Properties.encode(buf, propertyLen)
 	}
@@ -458,7 +478,10 @@ func (pc *PubComp) propertyLength() uint32 {
 }
 
 func (pc *PubComp) encodeProperties(buf *bytes.Buffer, propertyLen uint32) error {
-	mqttutil.EncodeVarUint32(buf, propertyLen)
+	if err := mqttutil.EncodeVarUint32(buf, propertyLen); err != nil {
+		return err
+	}
+
 	if pc.Properties != nil {
 		return pc.Properties.encode(buf, propertyLen)
 	}

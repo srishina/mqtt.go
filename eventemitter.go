@@ -126,9 +126,8 @@ func (e *eventEmitter) off(eventName string, callback interface{}) error {
 	return nil
 }
 
-func (e *eventEmitter) emit(eventName string, value interface{}) error {
+func (e *eventEmitter) emit(eventName string, value interface{}) {
 	e.eventq.push(&event{name: eventName, value: value})
-	return nil
 }
 
 func (e *eventEmitter) run() {

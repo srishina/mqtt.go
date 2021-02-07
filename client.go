@@ -157,7 +157,8 @@ func (c *Client) On(eventName string, callback interface{}) error {
 
 // Off removed the callback associated with the event name
 func (c *Client) Off(eventName string, value interface{}) error {
-	return c.eventEmitter.emit(eventName, value)
+	c.eventEmitter.emit(eventName, value)
+	return nil
 }
 
 // Unsubscribe send MQTT UNSUBSCRIBE request to the broker with the give Unsubscribe parameter
@@ -569,7 +570,9 @@ func (c *Client) protocolHandler(ph *protocolHandler, connAckPkt *ConnAck) {
 		}
 
 		if d != nil {
-			ph.sendPacket(d)
+			if err := ph.sendPacket(d); err != nil {
+				log.Warnf("Client is stopping, failed to send DISCONNECT message to broker error %v", err)
+			}
 		}
 
 		// set disconncted, from this point onwards we will not receive data in packetsToSend channel
@@ -848,7 +851,11 @@ func (c *protocolHandler) pinger() {
 				return
 			}
 
-			c.sendPacket(&pingReq{})
+			if err := c.sendPacket(&pingReq{}); err != nil {
+				c.shutdown(errors.New("Failed to send PINGREQ, disconnecting"))
+				return
+			}
+
 			waitForPingResp = true
 			c.resetKeepAliveTimer()
 

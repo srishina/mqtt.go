@@ -178,7 +178,10 @@ func (c *Connect) propertyLength() uint32 {
 }
 
 func (c *Connect) encodeProperties(buf *bytes.Buffer, propertyLen uint32) error {
-	mqttutil.EncodeVarUint32(buf, propertyLen)
+	if err := mqttutil.EncodeVarUint32(buf, propertyLen); err != nil {
+		return err
+	}
+
 	if c.Properties != nil {
 		return c.Properties.encode(buf, propertyLen)
 	}
@@ -224,8 +227,13 @@ func (c *Connect) encode(w io.Writer) error {
 
 	var packet bytes.Buffer
 	packet.Grow(int(remainingLength + 1 + mqttutil.EncodedVarUint32Size(remainingLength)))
-	mqttutil.EncodeByte(&packet, byte(packettype.CONNECT<<4))
-	mqttutil.EncodeVarUint32(&packet, remainingLength)
+	if err := mqttutil.EncodeByte(&packet, byte(packettype.CONNECT<<4)); err != nil {
+		return err
+	}
+
+	if err := mqttutil.EncodeVarUint32(&packet, remainingLength); err != nil {
+		return err
+	}
 
 	if _, err := packet.Write([]byte{0x0, 0x4, 'M', 'Q', 'T', 'T', 0x05}); err != nil {
 		return err
