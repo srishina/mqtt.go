@@ -24,7 +24,7 @@ var wg sync.WaitGroup
 
 func newClient() (*Client, error) {
 	url, _ := url.ParseRequestURI(requestURI)
-	client := NewClient(&websocketConn{Host: url.String()})
+	client := NewClient(&WebsocketConn{Host: url.String()})
 	return client, nil
 }
 
@@ -83,22 +83,22 @@ func TestBasic(t *testing.T) {
 	require.Equal(t, UnsubAckNoSubscriptionExisted, unsuback.ReasonCodes[0])
 }
 
-// func TestBasicWithKeepAlive(t *testing.T) {
-// 	responses := map[packettype.PacketType]packet{
-// 		packettype.CONNACK: &ConnAck{
-// 			ReasonCode:     ConnAckReasonCodeSuccess,
-// 			SessionPresent: false,
-// 		},
-// 		packettype.PINGRESP: &pingResp{},
-// 	}
-// 	client, err := setup(responses)
+func TestBasicWithKeepAlive(t *testing.T) {
+	responses := map[packettype.PacketType]packet{
+		packettype.CONNACK: &ConnAck{
+			ReasonCode:     ConnAckReasonCodeSuccess,
+			SessionPresent: false,
+		},
+		packettype.PINGRESP: &pingResp{},
+	}
+	client, err := setup(responses, false)
 
-// 	connack, err := client.Connect(context.Background(), &Connect{CleanStart: true, KeepAlive: 2})
-// 	require.NoError(t, err, "MQTT client connect failed")
-// 	require.Equal(t, ConnAckReasonCodeSuccess, connack.ReasonCode)
-// 	defer client.Disconnect(context.Background(), &Disconnect{})
-// 	time.Sleep(5 * time.Second)
-// }
+	connack, err := client.Connect(context.Background(), &Connect{CleanStart: true, KeepAlive: 2})
+	require.NoError(t, err, "MQTT client connect failed")
+	require.Equal(t, ConnAckReasonCodeSuccess, connack.ReasonCode)
+	defer client.Disconnect(context.Background(), &Disconnect{})
+	time.Sleep(5 * time.Second)
+}
 
 func TestSubUnsubCallback(t *testing.T) {
 	responses := map[packettype.PacketType]packet{

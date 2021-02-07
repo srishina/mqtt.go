@@ -7,19 +7,23 @@ import (
 	"net"
 )
 
-type tcpConn struct {
-	Connection
+// TCPConn concrete implementation of Connection
+// when used the MQTT client uses a TCP to
+// connect to MQTT broker
+type TCPConn struct {
 	conn      net.Conn
 	Host      string
 	TLSConfig *tls.Config
 	rw        io.ReadWriter
 }
 
-func (t *tcpConn) BrokerURL() string {
+// BrokerURL the broker URL
+func (t *TCPConn) BrokerURL() string {
 	return t.Host
 }
 
-func (t *tcpConn) Connect(ctx context.Context) (io.ReadWriter, error) {
+// Connect connect to MQTT broker
+func (t *TCPConn) Connect(ctx context.Context) (io.ReadWriter, error) {
 	dialer := net.Dialer{}
 	conn, err := dialer.DialContext(ctx, "tcp", t.Host)
 	if err != nil {
@@ -29,7 +33,8 @@ func (t *tcpConn) Connect(ctx context.Context) (io.ReadWriter, error) {
 	return t.conn, nil
 }
 
-func (t *tcpConn) Close() {
+// Close closes the connection
+func (t *TCPConn) Close() {
 	if t.conn != nil {
 		t.conn.Close()
 		t.conn = nil

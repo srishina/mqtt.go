@@ -11,19 +11,23 @@ import (
 	"github.com/srishina/mqtt.go/internal/mqttutil"
 )
 
-type websocketConn struct {
-	Connection
+// WebsocketConn concrete implementation of Connection
+// when used the MQTT client uses a WebSocket to
+// connect to MQTT broker
+type WebsocketConn struct {
 	conn      *websocket.Conn
 	Host      string
 	TLSConfig *tls.Config
 	rw        io.ReadWriter
 }
 
-func (w *websocketConn) BrokerURL() string {
+// BrokerURL the broker URL
+func (w *WebsocketConn) BrokerURL() string {
 	return w.Host
 }
 
-func (w *websocketConn) Connect(ctx context.Context) (io.ReadWriter, error) {
+// Connect connect to MQTT broker
+func (w *WebsocketConn) Connect(ctx context.Context) (io.ReadWriter, error) {
 	dialer := &websocket.Dialer{
 		Proxy:             http.ProxyFromEnvironment,
 		HandshakeTimeout:  10 * time.Second,
@@ -43,7 +47,8 @@ func (w *websocketConn) Connect(ctx context.Context) (io.ReadWriter, error) {
 	return w.rw, nil
 }
 
-func (w *websocketConn) Close() {
+// Close closes the connection
+func (w *WebsocketConn) Close() {
 	if w.conn != nil {
 		w.conn.Close()
 		w.conn = nil
