@@ -39,6 +39,7 @@ type ClientOption func(*clientOptions) error
 
 // WithInitialReconnectDelay delay for the first reconnect attempt
 // may vary depends on the provided jitter
+// default: 1000ms
 func WithInitialReconnectDelay(delay int) ClientOption {
 	return func(o *clientOptions) error {
 		o.initialReconnectDelay = delay
@@ -48,6 +49,7 @@ func WithInitialReconnectDelay(delay int) ClientOption {
 
 // WithMaxReconnectDelay max reconnect delay, once this value
 // is reached, the backoff time will not be increased
+// default: 32000ms
 func WithMaxReconnectDelay(delay int) ClientOption {
 	return func(o *clientOptions) error {
 		o.maxReconnectDelay = delay
@@ -56,6 +58,7 @@ func WithMaxReconnectDelay(delay int) ClientOption {
 }
 
 // WithReconnectJitter the value add randomness to the retry delay
+// default: 0.5
 func WithReconnectJitter(jitter float32) ClientOption {
 	return func(o *clientOptions) error {
 		o.jitter = jitter
