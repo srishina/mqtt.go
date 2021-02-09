@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -18,12 +20,48 @@ var (
 )
 
 type clientOptions struct {
+	// in ms
+	initialReconnectDelay int
+	// in ms
+	maxReconnectDelay int
+	// 0-1 inclusive
+	jitter float32
 }
 
-var defaultClientOptions = clientOptions{}
+var defaultClientOptions = clientOptions{
+	initialReconnectDelay: 1000,
+	maxReconnectDelay:     32000,
+	jitter:                0.5,
+}
 
 // ClientOption contains configurable settings for a client
 type ClientOption func(*clientOptions) error
+
+// WithInitialReconnectDelay delay for the first reconnect attempt
+// may vary depends on the provided jitter
+func WithInitialReconnectDelay(delay int) ClientOption {
+	return func(o *clientOptions) error {
+		o.initialReconnectDelay = delay
+		return nil
+	}
+}
+
+// WithMaxReconnectDelay max reconnect delay, once this value
+// is reached, the backoff time will not be increased
+func WithMaxReconnectDelay(delay int) ClientOption {
+	return func(o *clientOptions) error {
+		o.maxReconnectDelay = delay
+		return nil
+	}
+}
+
+// WithReconnectJitter the value add randomness to the retry delay
+func WithReconnectJitter(jitter float32) ClientOption {
+	return func(o *clientOptions) error {
+		o.jitter = jitter
+		return nil
+	}
+}
 
 type request struct {
 	pkt    packet
@@ -54,6 +92,7 @@ type Client struct {
 	incomingPublishQueue *mqttutil.SyncQueue
 	state                *clientState
 	eventEmitter         *eventEmitter
+	backoff              exponentialBackoff
 	wg                   sync.WaitGroup
 	notifyOnClose        chan error
 	disconnectPkt        chan packet
@@ -78,8 +117,14 @@ func NewClient(conn Connection, opt ...ClientOption) *Client {
 		incomingPublishQueue: mqttutil.NewSyncQueue(16),
 		state:                newClientState(),
 		eventEmitter:         newEventEmitter(),
-		disconnectPkt:        make(chan packet, 1),
-		stop:                 make(chan struct{})}
+		backoff: exponentialBackoff{
+			initialReconnectDelay: time.Duration(opts.initialReconnectDelay) * time.Millisecond,
+			currentInterval:       time.Duration(opts.initialReconnectDelay) * time.Millisecond,
+			maxReconnectDelay:     float64(opts.maxReconnectDelay),
+			jitter:                float64(opts.jitter),
+		},
+		disconnectPkt: make(chan packet, 1),
+		stop:          make(chan struct{})}
 }
 
 // Connect connect with MQTT broker and send CONNECT MQTT request
@@ -611,8 +656,12 @@ func (c *Client) protocolHandler(ph *protocolHandler, connAckPkt *ConnAck) {
 		// emit the disconnected event
 		c.eventEmitter.emit(DisconnectedEvent, err)
 
-		// try to connect after 500secs
-		time.Sleep(500 * time.Millisecond)
+		backoffdelay := c.backoff.next()
+		select {
+		case <-time.After(backoffdelay):
+		case <-c.stop:
+			continue
+		}
 
 		// inform that we are connecting
 		c.eventEmitter.emit(ReconnectingEvent, "Trying to connect")
@@ -649,6 +698,7 @@ func (c *Client) protocolHandler(ph *protocolHandler, connAckPkt *ConnAck) {
 		}
 		// inform that we are reconnected
 		c.eventEmitter.emit(ReconnectedEvent, connack)
+		c.backoff.reset()
 	}
 }
 
@@ -1152,4 +1202,35 @@ func newClientState() *clientState {
 		clientTopicAliases: make(map[uint16]string),
 		packetsToSend:      make(chan packet, 4),
 	}
+}
+
+type exponentialBackoff struct {
+	// in ms
+	currentInterval time.Duration
+
+	initialReconnectDelay time.Duration
+
+	// in ms
+	maxReconnectDelay float64
+	// 0-1 inclusive
+	jitter float64
+}
+
+func (e *exponentialBackoff) next() time.Duration {
+	current := float64(e.currentInterval.Milliseconds())
+	ranges := math.Floor(current - (current/2)*e.jitter)
+	current += ((rand.Float64() * ranges) - ranges/2)
+
+	current = math.Max(0, math.Min(e.maxReconnectDelay, current))
+	currentInterval := time.Duration(current * float64(time.Millisecond))
+
+	// calculate the next value
+	current *= 2
+	e.currentInterval = time.Duration(current * float64(time.Millisecond))
+
+	return currentInterval
+}
+
+func (e *exponentialBackoff) reset() {
+	e.currentInterval = e.initialReconnectDelay
 }

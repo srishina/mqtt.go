@@ -20,6 +20,7 @@ type mqttMockTester struct {
 	triggerPublishOnsubscribe bool
 	publishAckd               bool
 	disconnectAtPacketCount   int
+	clientReadDeadline        time.Duration
 	wg                        sync.WaitGroup
 }
 
@@ -37,6 +38,11 @@ func (m *mqttMockTester) Connect(ctx context.Context) (io.ReadWriter, error) {
 		defer m.wg.Done()
 		m.run()
 	}()
+
+	if m.clientReadDeadline != 0 {
+		clientConn.SetReadDeadline(time.Now().Add(m.clientReadDeadline))
+	}
+
 	return clientConn, nil
 }
 

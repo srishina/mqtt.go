@@ -30,13 +30,27 @@ func newClient() (*Client, error) {
 
 var mqttMock *mqttMockTester
 
-func setup(responses map[packettype.PacketType]packet, triggerPublish bool) (*Client, error) {
+type setupParams struct {
+	triggerPublish     bool
+	clientReadDeadline time.Duration
+	reconnectDelay     int
+}
+
+func setup(responses map[packettype.PacketType]packet, params setupParams) (*Client, error) {
 	mqttMock = &mqttMockTester{
 		responses:                 responses,
-		triggerPublishOnsubscribe: triggerPublish,
+		triggerPublishOnsubscribe: params.triggerPublish,
+		clientReadDeadline:        params.clientReadDeadline,
 	}
 
-	client := NewClient(mqttMock)
+	var opts []ClientOption
+	if params.reconnectDelay != 0 {
+		opts = append(opts, WithInitialReconnectDelay(params.reconnectDelay))
+	} else {
+		opts = append(opts, WithInitialReconnectDelay(50))
+	}
+
+	client := NewClient(mqttMock, opts...)
 	return client, nil
 }
 
@@ -53,7 +67,7 @@ func TestBasic(t *testing.T) {
 			ReasonCodes: []UnsubAckReasonCode{UnsubAckReasonCodeSuccess},
 		},
 	}
-	client, err := setup(responses, false)
+	client, err := setup(responses, setupParams{triggerPublish: false})
 
 	connack, err := client.Connect(context.Background(), &Connect{CleanStart: true})
 	require.NoError(t, err, "MQTT client connect failed")
@@ -91,7 +105,7 @@ func TestBasicWithKeepAlive(t *testing.T) {
 		},
 		packettype.PINGRESP: &pingResp{},
 	}
-	client, err := setup(responses, false)
+	client, err := setup(responses, setupParams{triggerPublish: false})
 
 	connack, err := client.Connect(context.Background(), &Connect{CleanStart: true, KeepAlive: 2})
 	require.NoError(t, err, "MQTT client connect failed")
@@ -113,7 +127,7 @@ func TestSubUnsubCallback(t *testing.T) {
 			ReasonCodes: []UnsubAckReasonCode{UnsubAckReasonCodeSuccess},
 		},
 	}
-	client, err := setup(responses, false)
+	client, err := setup(responses, setupParams{triggerPublish: false})
 
 	connack, err := client.Connect(context.Background(), &Connect{CleanStart: true})
 	require.NoError(t, err, "MQTT client connect failed")
@@ -144,7 +158,7 @@ func TestPublishQoS1(t *testing.T) {
 			ReasonCode: PubAckReasonCodeSuccess,
 		},
 	}
-	client, err := setup(responses, false)
+	client, err := setup(responses, setupParams{triggerPublish: false})
 
 	connack, err := client.Connect(context.Background(), &Connect{CleanStart: true})
 	require.NoError(t, err, "MQTT client connect failed")
@@ -168,7 +182,7 @@ func TestPublishQoS2(t *testing.T) {
 			ReasonCode: PubCompReasonCodeSuccess,
 		},
 	}
-	client, err := setup(responses, false)
+	client, err := setup(responses, setupParams{triggerPublish: false})
 
 	connack, err := client.Connect(context.Background(), &Connect{CleanStart: true})
 	require.NoError(t, err, "MQTT client connect failed")
@@ -195,7 +209,7 @@ func recvPublish(t *testing.T, publishResponses map[packettype.PacketType]packet
 	for k, v := range publishResponses {
 		responses[k] = v
 	}
-	client, err := setup(responses, true)
+	client, err := setup(responses, setupParams{triggerPublish: true})
 
 	connack, err := client.Connect(context.Background(), &Connect{CleanStart: true})
 	assert.NoError(t, err, "MQTT client connect failed")
@@ -254,7 +268,7 @@ func TestClientReconnect(t *testing.T) {
 			SessionPresent: false,
 		},
 	}
-	client, err := setup(responses, false)
+	client, err := setup(responses, setupParams{triggerPublish: false})
 	reconencted := make(chan struct{})
 	client.On(ReconnectedEvent, func(connack *ConnAck) {
 		close(reconencted)
@@ -291,7 +305,7 @@ func TestAutoSubscribeAfterReconnect(t *testing.T) {
 			ReasonCodes: []UnsubAckReasonCode{UnsubAckReasonCodeSuccess},
 		},
 	}
-	client, err := setup(responses, false)
+	client, err := setup(responses, setupParams{triggerPublish: false})
 
 	client.On(DisconnectedEvent, func(err error) {
 	})
@@ -343,7 +357,7 @@ func testPublishAfterReconnect(t *testing.T, respConnAck *ConnAck, disconnectPkt
 		},
 	}
 
-	client, err := setup(responses, false)
+	client, err := setup(responses, setupParams{triggerPublish: false})
 
 	mqttMock.disconnectAtPacketCount = disconnectPktCount
 	client.On(DisconnectedEvent, func(err error) {
@@ -400,6 +414,33 @@ func TestPublishAfterReconnectWithoutSession(t *testing.T) {
 			ReceiveMaximum: &recvMax,
 		},
 	}, 30)
+}
+
+func TestCloseClientInDisconnectedState(t *testing.T) {
+	responses := map[packettype.PacketType]packet{
+		packettype.CONNACK: &ConnAck{
+			ReasonCode:     ConnAckReasonCodeSuccess,
+			SessionPresent: false,
+		},
+	}
+	client, err := setup(responses, setupParams{
+		triggerPublish:     false,
+		clientReadDeadline: 10 * time.Millisecond,
+	})
+
+	client.On(DisconnectedEvent, func(err error) {
+	})
+
+	connack, err := client.Connect(context.Background(), &Connect{CleanStart: true})
+	require.NoError(t, err, "MQTT client connect failed")
+	require.Equal(t, ConnAckReasonCodeSuccess, connack.ReasonCode)
+
+	// close the server
+	mqttMock.svrConn.Close()
+
+	time.Sleep(250 * time.Millisecond)
+
+	client.Disconnect(context.Background(), &Disconnect{})
 }
 
 func TestSusbcriptionCache(t *testing.T) {
