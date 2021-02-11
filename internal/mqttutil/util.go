@@ -247,3 +247,14 @@ func BoolToByte(b bool) byte {
 func ByteToBool(b byte) bool {
 	return b != 0
 }
+
+// SliceIndex returns the index of the element position
+// returns -1 if not found
+func SliceIndex(limit int, predicate func(i int) bool) int {
+	for i := 0; i < limit; i++ {
+		if predicate(i) {
+			return i
+		}
+	}
+	return -1
+}

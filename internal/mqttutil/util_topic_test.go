@@ -195,8 +195,9 @@ func TestTopicUnsubscribe(t *testing.T) {
 	topic := "foo/#"
 	topicToMatch := "foo/"
 
+	subscriber := &testSubscriber{value: 10}
 	var topicMatcher = NewTopicMatcher()
-	if err := topicMatcher.Subscribe(topic, &testSubscriber{value: 10}); err != nil {
+	if err := topicMatcher.Subscribe(topic, subscriber); err != nil {
 		t.Errorf("topic matcher subscribe failed for %s %s\n", topic, topic)
 		return
 	}
@@ -207,7 +208,7 @@ func TestTopicUnsubscribe(t *testing.T) {
 	}
 
 	// now unsubscribe
-	err := topicMatcher.Unsubscribe(topic)
+	err := topicMatcher.Unsubscribe(topic, subscriber)
 	assert.NoError(t, err, "topic matcher unsubscribe failed for %s", topic)
 	ts := subscribers[0].(*testSubscriber)
 	assert.True(t, ts.finalizeCalled)
@@ -237,4 +238,51 @@ func TestTopicSubscribers(t *testing.T) {
 	var subscribers []Subscriber
 	result := topicMatcher.Match(topicToMatch, &subscribers)
 	assert.Equal(t, 3, len(subscribers), "topic matcher match failed for %s %v n subscribers %d\n", topicToMatch, result, len(subscribers))
+}
+
+func TestTopicWithMultipleSubscribers(t *testing.T) {
+	topic := "foo/#"
+	topicToMatch := "foo/"
+
+	subscriber := &testSubscriber{value: 10}
+	subscriber2 := &testSubscriber{value: 20}
+	subscriber3 := &testSubscriber{value: 30}
+	subscriber4 := &testSubscriber{value: 40}
+
+	var topicMatcher = NewTopicMatcher()
+	if err := topicMatcher.Subscribe(topic, subscriber); err != nil {
+		t.Errorf("topic matcher subscribe failed for %s %s\n", topic, topic)
+		return
+	}
+
+	if err := topicMatcher.Subscribe(topic, subscriber2); err != nil {
+		t.Errorf("topic matcher subscribe failed for %s %s\n", topic, topic)
+		return
+	}
+
+	if err := topicMatcher.Subscribe(topic, subscriber3); err != nil {
+		t.Errorf("topic matcher subscribe failed for %s %s\n", topic, topic)
+		return
+	}
+
+	if err := topicMatcher.Subscribe(topic, subscriber4); err != nil {
+		t.Errorf("topic matcher subscribe failed for %s %s\n", topic, topic)
+		return
+	}
+
+	var subscribers []Subscriber
+	if result := topicMatcher.Match(topicToMatch, &subscribers); len(subscribers) != 4 {
+		t.Errorf("topic matcher match failed for %s %v %v\n", topic, result, subscribers)
+	}
+
+	// now unsubscribe
+	err := topicMatcher.Unsubscribe(topic, subscriber2)
+	assert.NoError(t, err, "topic matcher unsubscribe failed for %s", topic)
+	ts := subscribers[1].(*testSubscriber)
+	assert.True(t, ts.finalizeCalled)
+
+	subscribers = subscribers[:0]
+	err = topicMatcher.Match(topicToMatch, &subscribers)
+	assert.NoError(t, err, "topic matcher Match failed with error")
+	assert.Equal(t, 3, len(subscribers), "expected 3 subscribers but found %d subscribers", len(subscribers))
 }

@@ -36,7 +36,7 @@ type setupParams struct {
 	reconnectDelay     int
 }
 
-func setup(responses map[packettype.PacketType]packet, params setupParams) (*Client, error) {
+func setup(responses map[packettype.PacketType]controlPacket, params setupParams) (*Client, error) {
 	mqttMock = &mqttMockTester{
 		responses:                 responses,
 		triggerPublishOnsubscribe: params.triggerPublish,
@@ -55,7 +55,7 @@ func setup(responses map[packettype.PacketType]packet, params setupParams) (*Cli
 }
 
 func TestBasic(t *testing.T) {
-	responses := map[packettype.PacketType]packet{
+	responses := map[packettype.PacketType]controlPacket{
 		packettype.CONNACK: &ConnAck{
 			ReasonCode:     ConnAckReasonCodeSuccess,
 			SessionPresent: false,
@@ -98,7 +98,7 @@ func TestBasic(t *testing.T) {
 }
 
 func TestBasicWithKeepAlive(t *testing.T) {
-	responses := map[packettype.PacketType]packet{
+	responses := map[packettype.PacketType]controlPacket{
 		packettype.CONNACK: &ConnAck{
 			ReasonCode:     ConnAckReasonCodeSuccess,
 			SessionPresent: false,
@@ -115,7 +115,7 @@ func TestBasicWithKeepAlive(t *testing.T) {
 }
 
 func TestSubUnsubCallback(t *testing.T) {
-	responses := map[packettype.PacketType]packet{
+	responses := map[packettype.PacketType]controlPacket{
 		packettype.CONNACK: &ConnAck{
 			ReasonCode:     ConnAckReasonCodeSuccess,
 			SessionPresent: false,
@@ -149,7 +149,7 @@ func TestSubUnsubCallback(t *testing.T) {
 }
 
 func TestPublishQoS1(t *testing.T) {
-	responses := map[packettype.PacketType]packet{
+	responses := map[packettype.PacketType]controlPacket{
 		packettype.CONNACK: &ConnAck{
 			ReasonCode:     ConnAckReasonCodeSuccess,
 			SessionPresent: false,
@@ -170,7 +170,7 @@ func TestPublishQoS1(t *testing.T) {
 }
 
 func TestPublishQoS2(t *testing.T) {
-	responses := map[packettype.PacketType]packet{
+	responses := map[packettype.PacketType]controlPacket{
 		packettype.CONNACK: &ConnAck{
 			ReasonCode:     ConnAckReasonCodeSuccess,
 			SessionPresent: false,
@@ -193,8 +193,8 @@ func TestPublishQoS2(t *testing.T) {
 	require.NoError(t, err, "MQTT client PUBLISH failed, QoS is 2")
 }
 
-func recvPublish(t *testing.T, publishResponses map[packettype.PacketType]packet, payload string) {
-	responses := map[packettype.PacketType]packet{
+func recvPublish(t *testing.T, publishResponses map[packettype.PacketType]controlPacket, payload string) {
+	responses := map[packettype.PacketType]controlPacket{
 		packettype.CONNACK: &ConnAck{
 			ReasonCode:     ConnAckReasonCodeSuccess,
 			SessionPresent: false,
@@ -238,7 +238,7 @@ func recvPublish(t *testing.T, publishResponses map[packettype.PacketType]packet
 
 func TestReceivePublishWithQoS0(t *testing.T) {
 	payload := "Willkommen!"
-	responses := map[packettype.PacketType]packet{
+	responses := map[packettype.PacketType]controlPacket{
 		packettype.PUBLISH: &Publish{TopicName: "TEST/GREETING", QoSLevel: 0, Payload: []byte(payload)},
 	}
 	recvPublish(t, responses, payload)
@@ -246,7 +246,7 @@ func TestReceivePublishWithQoS0(t *testing.T) {
 
 func TestReceivePublishWithQoS1(t *testing.T) {
 	payload := "Willkommen!"
-	responses := map[packettype.PacketType]packet{
+	responses := map[packettype.PacketType]controlPacket{
 		packettype.PUBLISH: &Publish{TopicName: "TEST/GREETING", QoSLevel: 1, Payload: []byte(payload)},
 	}
 	recvPublish(t, responses, payload)
@@ -254,7 +254,7 @@ func TestReceivePublishWithQoS1(t *testing.T) {
 
 func TestReceivePublishWithQoS2(t *testing.T) {
 	payload := "Willkommen!"
-	responses := map[packettype.PacketType]packet{
+	responses := map[packettype.PacketType]controlPacket{
 		packettype.PUBLISH: &Publish{TopicName: "TEST/GREETING", QoSLevel: 2, Payload: []byte(payload)},
 		packettype.PUBREL:  &PubRel{ReasonCode: PubRelReasonCodeSuccess},
 	}
@@ -262,7 +262,7 @@ func TestReceivePublishWithQoS2(t *testing.T) {
 }
 
 func TestClientReconnect(t *testing.T) {
-	responses := map[packettype.PacketType]packet{
+	responses := map[packettype.PacketType]controlPacket{
 		packettype.CONNACK: &ConnAck{
 			ReasonCode:     ConnAckReasonCodeSuccess,
 			SessionPresent: false,
@@ -293,7 +293,7 @@ func TestClientReconnect(t *testing.T) {
 }
 
 func TestAutoSubscribeAfterReconnect(t *testing.T) {
-	responses := map[packettype.PacketType]packet{
+	responses := map[packettype.PacketType]controlPacket{
 		packettype.CONNACK: &ConnAck{
 			ReasonCode:     ConnAckReasonCodeSuccess,
 			SessionPresent: false,
@@ -347,7 +347,7 @@ func TestAutoSubscribeAfterReconnect(t *testing.T) {
 }
 
 func testPublishAfterReconnect(t *testing.T, respConnAck *ConnAck, disconnectPktCount int) {
-	responses := map[packettype.PacketType]packet{
+	responses := map[packettype.PacketType]controlPacket{
 		packettype.CONNACK: respConnAck,
 		packettype.PUBREC: &PubRec{
 			ReasonCode: PubRecReasonCodeSuccess,
@@ -417,7 +417,7 @@ func TestPublishAfterReconnectWithoutSession(t *testing.T) {
 }
 
 func TestCloseClientInDisconnectedState(t *testing.T) {
-	responses := map[packettype.PacketType]packet{
+	responses := map[packettype.PacketType]controlPacket{
 		packettype.CONNACK: &ConnAck{
 			ReasonCode:     ConnAckReasonCodeSuccess,
 			SessionPresent: false,
@@ -457,12 +457,12 @@ func TestSusbcriptionCache(t *testing.T) {
 		{TopicFilter: "FOO/GREETING3", QoSLevel: 1},
 	}}
 
-	cache = append(cache, s)
-	cache = append(cache, s2)
+	cache = append(cache, &clientSubscription{subscribe: s})
+	cache = append(cache, &clientSubscription{subscribe: s2})
 	require.Equal(t, 2, len(cache))
 	cache.removeSubscriptionFromCache("TEST/GREETING2")
 	require.Equal(t, 2, len(cache))
-	require.Equal(t, 2, len(cache[0].Subscriptions))
+	require.Equal(t, 2, len(cache[0].subscribe.Subscriptions))
 	cache.removeSubscriptionFromCache("TEST/GREETING")
 	cache.removeSubscriptionFromCache("TEST/GREETING3")
 	require.Equal(t, 1, len(cache))

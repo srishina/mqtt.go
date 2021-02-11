@@ -9,10 +9,10 @@ import (
 // memstore packet heap store
 type memstore struct {
 	sync.RWMutex
-	messages map[uint32]packet
+	messages map[uint32]controlPacket
 }
 
-func (ms *memstore) Insert(key uint32, pkt packet) error {
+func (ms *memstore) Insert(key uint32, pkt controlPacket) error {
 	ms.Lock()
 	defer ms.Unlock()
 
@@ -21,7 +21,7 @@ func (ms *memstore) Insert(key uint32, pkt packet) error {
 	return nil
 }
 
-func (ms *memstore) GetByID(key uint32) packet {
+func (ms *memstore) GetByID(key uint32) controlPacket {
 	ms.Lock()
 	defer ms.Unlock()
 	return ms.messages[key]
@@ -39,13 +39,13 @@ func (ms *memstore) DeleteByID(key uint32) {
 }
 
 func (ms *memstore) DeleteAll() {
-	ms.messages = make(map[uint32]packet)
+	ms.messages = make(map[uint32]controlPacket)
 }
 
-func (ms *memstore) CopyItems() []packet {
+func (ms *memstore) CopyItems() []controlPacket {
 	ms.Lock()
 	defer ms.Unlock()
-	packets := make([]packet, 0)
+	packets := make([]controlPacket, 0)
 	for _, v := range ms.messages {
 		packets = append(packets, v)
 	}
@@ -53,5 +53,5 @@ func (ms *memstore) CopyItems() []packet {
 }
 
 func newMemStore() *memstore {
-	return &memstore{messages: make(map[uint32]packet)}
+	return &memstore{messages: make(map[uint32]controlPacket)}
 }

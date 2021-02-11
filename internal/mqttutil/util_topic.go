@@ -59,14 +59,24 @@ func isEmpty(str string) bool {
 	return len(str) == 0
 }
 
-// Subscriber ...
+// Subscriber subscriber interface, when the subscriber is going away
+// Finalize method will be called to do the cleanup
 type Subscriber interface {
 	Finalize()
 }
 
+// Subscribers subscriber list
+type Subscribers []Subscriber
+
+func (s *Subscribers) delete(index int) {
+	copy((*s)[index:], (*s)[index+1:])
+	(*s)[len(*s)-1] = nil
+	(*s) = (*s)[:len(*s)-1]
+}
+
 type node struct {
 	part       string
-	subscriber Subscriber
+	subscriber Subscribers
 	parent     *node
 	children   map[string]*node
 }
@@ -78,12 +88,13 @@ func (n *node) remove() {
 	}
 
 	delete(n.parent.children, n.part)
-	if n.parent.subscriber != nil && len(n.parent.children) == 0 {
+	if len(n.parent.subscriber) == 0 && len(n.parent.children) == 0 {
 		n.parent.remove()
 	}
 }
 
-// TopicMatcher ...
+// TopicMatcher stores the topic and it's subscribers
+// more than one subscriber can be associated with one topic
 type TopicMatcher struct {
 	root *node
 	mu   sync.RWMutex
@@ -98,7 +109,7 @@ func NewTopicMatcher() *TopicMatcher {
 	}
 }
 
-// Subscribe ...
+// Subscribe subscribe a given topic
 func (t *TopicMatcher) Subscribe(topic string, sub Subscriber) error {
 	if err := ValidateSubscribeTopic(topic); err != nil {
 		return err
@@ -121,18 +132,17 @@ func (t *TopicMatcher) Subscribe(topic string, sub Subscriber) error {
 		cur = child
 	}
 
-	cur.subscriber = sub
+	cur.subscriber = append(cur.subscriber, sub)
 
 	return nil
 }
 
-// Unsubscribe ...
-func (t *TopicMatcher) Unsubscribe(topic string) error {
+// Unsubscribe the given topic
+func (t *TopicMatcher) Unsubscribe(topic string, s Subscriber) error {
 	if err := ValidateSubscribeTopic(topic); err != nil {
 		return err
 	}
 
-	var subscriber Subscriber
 	t.mu.Lock()
 	cur := t.root
 	for _, part := range strings.Split(topic, "/") {
@@ -144,23 +154,25 @@ func (t *TopicMatcher) Unsubscribe(topic string) error {
 		cur = child
 	}
 
-	subscriber = cur.subscriber
-	cur.subscriber = nil
+	found := SliceIndex(len(cur.subscriber), func(i int) bool { return cur.subscriber[i] == s })
+	if found != -1 {
+		cur.subscriber.delete((found))
+	}
 
 	// check wheher we have children
-	if len(cur.children) == 0 {
+	if len(cur.subscriber) == 0 && len(cur.children) == 0 {
 		cur.remove()
 	}
 	t.mu.Unlock()
 
-	if subscriber != nil {
-		subscriber.Finalize()
+	if found != -1 && s != nil {
+		s.Finalize()
 	}
 
 	return nil
 }
 
-// Match ...
+// Match returns all the matching subscribers for the matched topic
 func (t *TopicMatcher) Match(topic string, subscribers *[]Subscriber) error {
 	if err := ValidatePublishTopic(topic); err != nil {
 		return nil
@@ -172,15 +184,14 @@ func (t *TopicMatcher) Match(topic string, subscribers *[]Subscriber) error {
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
-
 	t.match(strings.Split(topic, "/"), t.root, subscribers)
 
 	return nil
 }
 
-func addSubscriber(sub Subscriber, subscribers *[]Subscriber) {
+func addSubscriber(sub []Subscriber, subscribers *[]Subscriber) {
 	if sub != nil {
-		*subscribers = append(*subscribers, sub)
+		*subscribers = append(*subscribers, sub...)
 	}
 }
 

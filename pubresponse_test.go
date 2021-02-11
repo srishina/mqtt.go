@@ -42,7 +42,7 @@ func TestCodecPublishResponseNoProps(t *testing.T) {
 		},
 	}
 
-	packetTypes := []packet{
+	packetTypes := []controlPacket{
 		&PubAck{},
 		&PubRec{},
 		&PubRel{},
@@ -133,7 +133,7 @@ func TestCodecPublishResponseWithSuccessCodeAndProps(t *testing.T) {
 		},
 	}
 
-	packetTypes := []packet{
+	packetTypes := []controlPacket{
 		&PubAck{},
 		&PubRec{},
 		&PubRel{},
@@ -208,7 +208,7 @@ func TestCodecPublishResponseWithSuccessCodeAndNoProps(t *testing.T) {
 		},
 	}
 
-	packetTypes := []packet{
+	packetTypes := []controlPacket{
 		&PubAck{},
 		&PubRec{},
 		&PubRel{},

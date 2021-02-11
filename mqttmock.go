@@ -16,7 +16,7 @@ type mqttMockTester struct {
 	Connection
 	svrConn                   net.Conn
 	requests                  []packettype.PacketType
-	responses                 map[packettype.PacketType]packet
+	responses                 map[packettype.PacketType]controlPacket
 	triggerPublishOnsubscribe bool
 	publishAckd               bool
 	disconnectAtPacketCount   int

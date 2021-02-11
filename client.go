@@ -15,10 +15,6 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
-var (
-	ErrProtocol = errors.New("Protocol error")
-)
-
 type clientOptions struct {
 	// in ms
 	initialReconnectDelay int
@@ -67,7 +63,7 @@ func WithReconnectJitter(jitter float32) ClientOption {
 }
 
 type request struct {
-	pkt    packet
+	pkt    controlPacket
 	result chan interface{}
 	err    error
 }
@@ -88,7 +84,6 @@ type Client struct {
 	options              clientOptions
 	mqttConnPkt          *Connect
 	assignedClientID     string
-	store                Store
 	pidgenerator         *mqttutil.PIDGenerator
 	topicMatcher         *mqttutil.TopicMatcher
 	subscriptionCache    subscriptionCache
@@ -98,7 +93,7 @@ type Client struct {
 	backoff              exponentialBackoff
 	wg                   sync.WaitGroup
 	notifyOnClose        chan error
-	disconnectPkt        chan packet
+	disconnectPkt        chan controlPacket
 	stop                 chan struct{}
 }
 
@@ -114,7 +109,6 @@ func NewClient(conn Connection, opt ...ClientOption) *Client {
 
 	return &Client{conn: conn,
 		options:              opts,
-		store:                newMemStore(),
 		pidgenerator:         mqttutil.NewPIDGenerator(),
 		topicMatcher:         mqttutil.NewTopicMatcher(),
 		incomingPublishQueue: mqttutil.NewSyncQueue(16),
@@ -126,7 +120,7 @@ func NewClient(conn Connection, opt ...ClientOption) *Client {
 			maxReconnectDelay:     float64(opts.maxReconnectDelay),
 			jitter:                float64(opts.jitter),
 		},
-		disconnectPkt: make(chan packet, 1),
+		disconnectPkt: make(chan controlPacket, 1),
 		stop:          make(chan struct{})}
 }
 
@@ -214,7 +208,8 @@ func (c *Client) Off(eventName string, value interface{}) error {
 // The function waits for the the MQTT SUBSCRIBE response, SubAck, or for a packet timeout
 func (c *Client) Unsubscribe(ctx context.Context, us *Unsubscribe) (*UnsubAck, error) {
 	for _, topicFilter := range us.TopicFilters {
-		if err := c.topicMatcher.Unsubscribe(topicFilter); err != nil {
+		clientSub := c.subscriptionCache.getSubscriptionFromCache(topicFilter)
+		if err := c.topicMatcher.Unsubscribe(topicFilter, clientSub); err != nil {
 			return nil, err
 		}
 		// remove from subscription cache
@@ -310,25 +305,18 @@ func (c *Client) Publish(ctx context.Context, p *Publish) error {
 }
 
 func (c *Client) subscribe(ctx context.Context, s *clientSubscription) (*SubAck, error) {
-	// add to topic Matcher
-	for _, subscription := range s.subscribe.Subscriptions {
-		if err := c.topicMatcher.Subscribe(subscription.TopicFilter, s); err != nil {
-			log.Errorf("Unable to subscribe the topic %v", err)
-			return nil, err
-		}
-	}
-	return c.subscribeInternal(ctx, s.subscribe)
+	return c.subscribeInternal(ctx, s)
 }
 
-func (c *Client) subscribeInternal(ctx context.Context, s *Subscribe) (*SubAck, error) {
-	s.packetID = c.pidgenerator.NextID()
+func (c *Client) subscribeInternal(ctx context.Context, s *clientSubscription) (*SubAck, error) {
+	s.subscribe.packetID = c.pidgenerator.NextID()
 
-	req := &request{pkt: s, result: make(chan interface{})}
+	req := &request{pkt: s.subscribe, result: make(chan interface{})}
 	// add it to ongoing requests
 	c.state.mu.Lock()
-	c.state.pendingRequests[s.packetID] = req
+	c.state.pendingRequests[s.subscribe.packetID] = req
 	// push to the outgoing queue
-	c.state.outgoingPackets[s.packetID] = req.pkt
+	c.state.outgoingPackets[s.subscribe.packetID] = req.pkt
 	if c.state.connected {
 		c.state.packetsToSend <- req.pkt
 	}
@@ -343,6 +331,14 @@ func (c *Client) subscribeInternal(ctx context.Context, s *Subscribe) (*SubAck, 
 	}
 
 	if suback, ok := result.(*SubAck); ok {
+		// add to topic Matcher
+		for _, subscription := range s.subscribe.Subscriptions {
+			if err := c.topicMatcher.Subscribe(subscription.TopicFilter, s); err != nil {
+				log.Errorf("Unable to subscribe the topic %v", err)
+				return nil, err
+			}
+		}
+
 		// store the client subscription in the cache (used while resubscribing)
 		c.subscriptionCache = append(c.subscriptionCache, s)
 		return suback, nil
@@ -475,8 +471,8 @@ func (c *Client) connect(ctx context.Context) (*protocolHandler, *ConnAck, error
 }
 
 // must be called from state locked context
-func (c *Client) restoreState(ph *protocolHandler, connack *ConnAck, sem *semaphore.Weighted) []packet {
-	pendingQoS12Pkts := []packet{}
+func (c *Client) restoreState(ph *protocolHandler, connack *ConnAck, sem *semaphore.Weighted) []controlPacket {
+	pendingQoS12Pkts := []controlPacket{}
 	// and drain the packetsToSend channel
 	for {
 		var stop bool
@@ -503,11 +499,11 @@ func (c *Client) restoreState(ph *protocolHandler, connack *ConnAck, sem *semaph
 					c.eventEmitter.emit(ResubscribeEvent, ResubscribeResult{Subscribe: s, Error: err})
 				}
 				c.eventEmitter.emit(ResubscribeEvent, ResubscribeResult{Subscribe: s, SubAck: suback})
-			}(s)
+			}(s.subscribe)
 		}
 		pendingReqs := c.state.pendingRequests
-		c.state.incomingPackets = make(map[uint16]packet)
-		c.state.outgoingPackets = make(map[uint16]packet)
+		c.state.incomingPackets = make(map[uint16]controlPacket)
+		c.state.outgoingPackets = make(map[uint16]controlPacket)
 		c.state.pendingRequests = make(map[uint16]*request)
 
 		// now we need to send all pending requests
@@ -563,7 +559,7 @@ func (c *Client) protocolHandler(ph *protocolHandler, connAckPkt *ConnAck) {
 	defer c.wg.Done()
 
 	var semServerRecvMax *semaphore.Weighted
-	onconnected := func() []packet {
+	onconnected := func() []controlPacket {
 		defaultRecvMax := 65535
 		if connAckPkt.Properties != nil && connAckPkt.Properties.ReceiveMaximum != nil {
 			defaultRecvMax = int(*(connAckPkt.Properties.ReceiveMaximum))
@@ -591,7 +587,7 @@ func (c *Client) protocolHandler(ph *protocolHandler, connAckPkt *ConnAck) {
 	for {
 		var stopping bool
 		var err error
-		var d packet
+		var d controlPacket
 		select {
 		case d = <-c.disconnectPkt:
 		case <-c.stop:
@@ -728,14 +724,14 @@ func (c *Client) complete(msgID uint16, err error, result interface{}) {
 	c.pidgenerator.FreeID(msgID)
 }
 
-func (c *Client) storeOutgoing(id uint16, pkt packet) {
+func (c *Client) storeOutgoing(id uint16, pkt controlPacket) {
 	c.state.mu.Lock()
 	defer c.state.mu.Unlock()
 	// push to the outgoing queue
 	c.state.outgoingPackets[id] = pkt
 }
 
-func (c *Client) storeIncoming(id uint16, pkt packet) {
+func (c *Client) storeIncoming(id uint16, pkt controlPacket) {
 	c.state.mu.Lock()
 	defer c.state.mu.Unlock()
 	c.state.incomingPackets[id] = pkt
@@ -845,7 +841,7 @@ func (c *protocolHandler) run() {
 	}
 }
 
-func (c *protocolHandler) schedule(pkt packet) {
+func (c *protocolHandler) schedule(pkt controlPacket) {
 	// push to the outgoing queue
 	c.packetsToSend.push(pkt)
 }
@@ -936,7 +932,7 @@ func (c *protocolHandler) pinger() {
 	}
 }
 
-func (c *protocolHandler) process(pkt packet) error {
+func (c *protocolHandler) process(pkt controlPacket) error {
 	switch pkt.(type) {
 	case *Publish:
 		return c.publishHandler(pkt.(*Publish))
@@ -1058,7 +1054,7 @@ func (c *protocolHandler) pingRespHandler(pingresp *pingResp) error {
 	return nil
 }
 
-func (c *protocolHandler) sendPacket(pkt packet) error {
+func (c *protocolHandler) sendPacket(pkt controlPacket) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	writer := mqttutil.NewBufioWriterSize(c.rw, 2*1024)
@@ -1092,19 +1088,31 @@ type clientSubscription struct {
 	cbDispatcher *messageDispatcher
 }
 
-type subscriptionCache []*Subscribe
+type subscriptionCache []*clientSubscription
+
+func (sc *subscriptionCache) getSubscriptionFromCache(topicFilter string) *clientSubscription {
+	for _, clientSub := range *sc {
+		if found := mqttutil.SliceIndex(len(clientSub.subscribe.Subscriptions), func(i int) bool {
+			return clientSub.subscribe.Subscriptions[i].TopicFilter == topicFilter
+		}); found != -1 {
+			return clientSub
+		}
+	}
+
+	return nil
+}
 
 func (sc *subscriptionCache) removeSubscriptionFromCache(topicFilter string) {
 	for i, s := range *sc {
 		var removed bool
-		for j, subscription := range s.Subscriptions {
+		for j, subscription := range s.subscribe.Subscriptions {
 			if subscription.TopicFilter == topicFilter {
-				s.Subscriptions = append(s.Subscriptions[:j], s.Subscriptions[j+1:]...)
+				s.subscribe.Subscriptions = append(s.subscribe.Subscriptions[:j], s.subscribe.Subscriptions[j+1:]...)
 				removed = true
 				break
 			}
 		}
-		if len(s.Subscriptions) == 0 {
+		if len(s.subscribe.Subscriptions) == 0 {
 			// Remove the whole subscribe
 			*sc = append((*sc)[:i], (*sc)[i+1:]...)
 		}
@@ -1124,7 +1132,7 @@ func (c *clientSubscription) Finalize() {
 
 type packetQueue struct {
 	mu     sync.Mutex
-	data   []packet
+	data   []controlPacket
 	signal chan struct{}
 }
 
@@ -1146,7 +1154,7 @@ func (p *packetQueue) len() int {
 }
 
 // push adds an item to the queue
-func (p *packetQueue) push(item packet) {
+func (p *packetQueue) push(item controlPacket) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.data = append(p.data, item)
@@ -1165,10 +1173,10 @@ func (p *packetQueue) shift() {
 }
 
 // pop returns the element and the status of the queue (closed or not)
-func (p *packetQueue) pop() packet {
+func (p *packetQueue) pop() controlPacket {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	var item packet
+	var item controlPacket
 	if len(p.data) > 0 {
 		item, p.data = p.data[0], p.data[1:]
 	}
@@ -1185,25 +1193,25 @@ type clientState struct {
 	// we need to synchronize the data
 	mu                 sync.Mutex
 	connected          bool
-	packetsToSend      chan packet
+	packetsToSend      chan controlPacket
 	pendingRequests    map[uint16]*request
-	incomingPackets    map[uint16]packet
-	outgoingPackets    map[uint16]packet
+	incomingPackets    map[uint16]controlPacket
+	outgoingPackets    map[uint16]controlPacket
 	clientTopicAliases map[uint16]string
 }
 
 type clientStatePacketStore interface {
-	storeOutgoing(id uint16, pkt packet)
-	storeIncoming(id uint16, pkt packet)
+	storeOutgoing(id uint16, pkt controlPacket)
+	storeIncoming(id uint16, pkt controlPacket)
 }
 
 func newClientState() *clientState {
 	return &clientState{
 		pendingRequests:    make(map[uint16]*request),
-		incomingPackets:    make(map[uint16]packet),
-		outgoingPackets:    make(map[uint16]packet),
+		incomingPackets:    make(map[uint16]controlPacket),
+		outgoingPackets:    make(map[uint16]controlPacket),
 		clientTopicAliases: make(map[uint16]string),
-		packetsToSend:      make(chan packet, 4),
+		packetsToSend:      make(chan controlPacket, 4),
 	}
 }
 

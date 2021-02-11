@@ -164,6 +164,7 @@ type Connect struct {
 	protocolVersion byte
 	CleanStart      bool
 	KeepAlive       uint16
+	WillFlag        bool
 	Properties      *ConnectProperties
 	ClientID        string
 	UserName        string

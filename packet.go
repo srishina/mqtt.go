@@ -2,6 +2,7 @@ package mqtt
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 
@@ -9,8 +10,12 @@ import (
 	"github.com/srishina/mqtt.go/internal/packettype"
 )
 
-// packet MQTT control packet codec interface
-type packet interface {
+var (
+	ErrProtocol = errors.New("Protocol error")
+)
+
+// controlPacket MQTT control packet codec interface
+type controlPacket interface {
 	encode(w io.Writer) error
 	decode(r io.Reader, remainingLen uint32) error
 }
@@ -18,7 +23,7 @@ type packet interface {
 // PROTOCOLVERSIONv5 MQTT protocol version
 var PROTOCOLVERSIONv5 = byte(0x05)
 
-func readFrom(r io.Reader) (packet, error) {
+func readFrom(r io.Reader) (controlPacket, error) {
 	byte0, remainingLength, err := readFixedHeader(r)
 	if err != nil {
 		return nil, err
@@ -37,12 +42,12 @@ func readFrom(r io.Reader) (packet, error) {
 	return p, err
 }
 
-func writeTo(p packet, w io.Writer) error {
+func writeTo(p controlPacket, w io.Writer) error {
 	return p.encode(w)
 }
 
 // newPacketWithHeader aa
-func newPacketWithHeader(byte0 byte) (packet, error) {
+func newPacketWithHeader(byte0 byte) (controlPacket, error) {
 	pktType := packettype.PacketType(byte0 >> 4)
 	switch pktType {
 	case packettype.CONNECT:
