@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/srishina/mqtt.go/internal/mqttutil"
 	"github.com/srishina/mqtt.go/internal/packettype"
@@ -20,6 +21,32 @@ type PublishProperties struct {
 	UserProperty            map[string]string
 	SubscriptionIdentifiers []uint32
 	ContentType             string
+}
+
+func (pp *PublishProperties) String() string {
+	var fields []string
+	if pp.PayloadFormatIndicator != nil {
+		fields = append(fields, fmt.Sprintf("Payload format indicator: %t", *pp.PayloadFormatIndicator))
+	}
+	if pp.MessageExpiryInterval != nil {
+		fields = append(fields, fmt.Sprintf("Message expiry interval: %d", *pp.MessageExpiryInterval))
+	}
+	if pp.TopicAlias != nil {
+		fields = append(fields, fmt.Sprintf("Topic alias: %d", *pp.TopicAlias))
+	}
+	if len(pp.ResponseTopic) > 0 {
+		fields = append(fields, fmt.Sprintf("Response topic: %s", pp.ResponseTopic))
+	}
+	if len(pp.CorrelationData) > 0 {
+		fields = append(fields, fmt.Sprintf("Correlation data: [% x]", pp.CorrelationData))
+	}
+	if len(pp.SubscriptionIdentifiers) > 0 {
+		fields = append(fields, fmt.Sprintf("Subscription identifier: [% x]", pp.SubscriptionIdentifiers))
+	}
+	if len(pp.ContentType) > 0 {
+		fields = append(fields, fmt.Sprintf("Content type: [% x]", pp.ContentType))
+	}
+	return fmt.Sprintf("{%s}", strings.Join(fields, ","))
 }
 
 func (pp *PublishProperties) length() uint32 {
@@ -149,6 +176,11 @@ type Publish struct {
 	packetID   uint16
 	Properties *PublishProperties
 	Payload    []byte
+}
+
+func (p *Publish) String() string {
+	return fmt.Sprintf(`QOS Level: %d DUP? %t Retain? %t
+		Topic name: %s Properties: %s`, p.QoSLevel, p.DUPFlag, p.Retain, p.TopicName, p.Properties)
 }
 
 func (p *Publish) propertyLength() uint32 {

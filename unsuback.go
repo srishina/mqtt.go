@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/srishina/mqtt.go/internal/mqttutil"
 	"github.com/srishina/mqtt.go/internal/packettype"
@@ -61,6 +62,14 @@ func (code UnsubAckReasonCode) Desc() string {
 type UnsubAckProperties struct {
 	ReasonString string
 	UserProperty map[string]string
+}
+
+func (usp *UnsubAckProperties) String() string {
+	var fields []string
+	if len(usp.ReasonString) > 0 {
+		fields = append(fields, fmt.Sprintf("Reason string: %s", usp.ReasonString))
+	}
+	return fmt.Sprintf("{%s}", strings.Join(fields, ","))
 }
 
 func (usp *UnsubAckProperties) length() uint32 {
@@ -123,6 +132,10 @@ type UnsubAck struct {
 	packetID    uint16
 	Properties  *UnsubAckProperties
 	ReasonCodes []UnsubAckReasonCode
+}
+
+func (us *UnsubAck) String() string {
+	return fmt.Sprintf(`Reason codes: [% x] Properties: %s`, us.ReasonCodes, us.Properties)
 }
 
 func (us *UnsubAck) propertyLength() uint32 {

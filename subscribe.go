@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/srishina/mqtt.go/internal/mqttutil"
 	"github.com/srishina/mqtt.go/internal/properties"
@@ -18,6 +19,14 @@ var (
 type SubscribeProperties struct {
 	SubscriptionIdentifier *uint32
 	UserProperty           map[string]string
+}
+
+func (sp *SubscribeProperties) String() string {
+	var fields []string
+	if sp.SubscriptionIdentifier != nil {
+		fields = append(fields, fmt.Sprintf("Subscription identifier: %d", *sp.SubscriptionIdentifier))
+	}
+	return fmt.Sprintf("{%s}", strings.Join(fields, ","))
 }
 
 func (sp *SubscribeProperties) length() uint32 {
@@ -86,11 +95,20 @@ type Subscription struct {
 	RetainHandling    byte
 }
 
+func (s *Subscription) String() string {
+	return fmt.Sprintf(`Topic filter: %s QoS level: %d No Local? %t
+		Retain as published? %t Retain handling: %d`, s.TopicFilter, s.QoSLevel, s.NoLocal, s.RetainAsPublished, s.RetainHandling)
+}
+
 // Subscribe MQTT SUBSCRIBE packet
 type Subscribe struct {
 	packetID      uint16
-	Subscriptions []Subscription
+	Subscriptions []*Subscription
 	Properties    *SubscribeProperties
+}
+
+func (s *Subscribe) String() string {
+	return fmt.Sprintf(`Subscriptions: [% v] Properties: %s`, s.Subscriptions, s.Properties)
 }
 
 func (s *Subscribe) propertyLength() uint32 {
@@ -215,7 +233,7 @@ func (s *Subscribe) decode(r io.Reader, remainingLen uint32) error {
 		rh := b & 0x30
 
 		s.Subscriptions = append(s.Subscriptions,
-			Subscription{TopicFilter: topicFilter, QoSLevel: qosLevel, NoLocal: nl, RetainAsPublished: rap, RetainHandling: rh})
+			&Subscription{TopicFilter: topicFilter, QoSLevel: qosLevel, NoLocal: nl, RetainAsPublished: rap, RetainHandling: rh})
 		remainingLen -= uint32(len(topicFilter) + 2 + 1)
 	}
 

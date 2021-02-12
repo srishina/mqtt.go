@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/srishina/mqtt.go/internal/mqttutil"
 	"github.com/srishina/mqtt.go/internal/packettype"
@@ -120,6 +121,59 @@ type ConnAckProperties struct {
 	ServerReference                 string
 	AuthenticationMethod            string
 	AuthenticationData              []byte
+}
+
+func (cp *ConnAckProperties) String() string {
+	var fields []string
+	if cp.SessionExpiryInterval != nil {
+		fields = append(fields, fmt.Sprintf("Session expiry interval: %d", *cp.SessionExpiryInterval))
+	}
+	if cp.ReceiveMaximum != nil {
+		fields = append(fields, fmt.Sprintf("Receive maximum: %d", *cp.ReceiveMaximum))
+	}
+	if cp.MaximumQoS != nil {
+		fields = append(fields, fmt.Sprintf("Maximum QoS: %d", *cp.MaximumQoS))
+	}
+	if cp.RetainAvailable != nil {
+		fields = append(fields, fmt.Sprintf("Retain available: %t", *cp.RetainAvailable))
+	}
+	if cp.MaximumPacketSize != nil {
+		fields = append(fields, fmt.Sprintf("Maximum packet size: %d", *cp.MaximumPacketSize))
+	}
+	if len(cp.AssignedClientIdentifier) > 0 {
+		fields = append(fields, fmt.Sprintf("Assigned client id: %s", cp.AssignedClientIdentifier))
+	}
+	if cp.TopicAliasMaximum != nil {
+		fields = append(fields, fmt.Sprintf("Topic alias max: %d", *cp.TopicAliasMaximum))
+	}
+	if len(cp.ReasonString) > 0 {
+		fields = append(fields, fmt.Sprintf("Reason string: %s", cp.ReasonString))
+	}
+	if cp.WildcardSubscriptionAvailable != nil {
+		fields = append(fields, fmt.Sprintf("Wildcard subscription available: %t", *cp.WildcardSubscriptionAvailable))
+	}
+	if cp.SubscriptionIdentifierAvailable != nil {
+		fields = append(fields, fmt.Sprintf("Subscription ID available: %t", *cp.SubscriptionIdentifierAvailable))
+	}
+	if cp.SharedSubscriptionAvailable != nil {
+		fields = append(fields, fmt.Sprintf("Shared subscription available: %t", *cp.SharedSubscriptionAvailable))
+	}
+	if cp.ServerKeepAlive != nil {
+		fields = append(fields, fmt.Sprintf("Server keep alive: %d", *cp.ServerKeepAlive))
+	}
+	if len(cp.ResponseInformation) > 0 {
+		fields = append(fields, fmt.Sprintf("Response info: %s", cp.ResponseInformation))
+	}
+	if len(cp.ServerReference) > 0 {
+		fields = append(fields, fmt.Sprintf("Server reference: %s", cp.ServerReference))
+	}
+	if len(cp.AuthenticationMethod) > 0 {
+		fields = append(fields, fmt.Sprintf("Authentication Method: %s", cp.AuthenticationMethod))
+	}
+	if len(cp.AuthenticationData) > 0 {
+		fields = append(fields, fmt.Sprintf("Authentication Data: ****"))
+	}
+	return fmt.Sprintf("{%s}", strings.Join(fields, ","))
 }
 
 func (cp *ConnAckProperties) length() uint32 {
@@ -328,6 +382,11 @@ type ConnAck struct {
 	SessionPresent bool
 	ReasonCode     ConnAckReasonCode
 	Properties     *ConnAckProperties
+}
+
+func (c *ConnAck) String() string {
+	return fmt.Sprintf(`Session present: %t  Reason code: %d Properties: %s`,
+		c.SessionPresent, c.ReasonCode, c.Properties)
 }
 
 // propertyLength property length

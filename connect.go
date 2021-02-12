@@ -3,8 +3,10 @@ package mqtt
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"math"
+	"strings"
 
 	"github.com/srishina/mqtt.go/internal/mqttutil"
 	"github.com/srishina/mqtt.go/internal/packettype"
@@ -38,6 +40,35 @@ const maximumPacketSizeDefault uint32 = math.MaxUint32
 const topicAliasMaximumDefault uint16 = 0
 const requestProblemInfoDefault bool = true
 const requestResponseInfoDefault bool = false
+
+func (cp *ConnectProperties) String() string {
+	var fields []string
+	if cp.SessionExpiryInterval != nil {
+		fields = append(fields, fmt.Sprintf("Session expiry interval: %d", *cp.SessionExpiryInterval))
+	}
+	if cp.ReceiveMaximum != nil {
+		fields = append(fields, fmt.Sprintf("Receive maximum: %d", *cp.ReceiveMaximum))
+	}
+	if cp.MaximumPacketSize != nil {
+		fields = append(fields, fmt.Sprintf("Maximum packet size: %d", *cp.MaximumPacketSize))
+	}
+	if cp.TopicAliasMaximum != nil {
+		fields = append(fields, fmt.Sprintf("Topic alias max: %d", *cp.TopicAliasMaximum))
+	}
+	if cp.RequestProblemInfo != nil {
+		fields = append(fields, fmt.Sprintf("Request problem info: %t", *cp.RequestProblemInfo))
+	}
+	if cp.RequestResponseInfo != nil {
+		fields = append(fields, fmt.Sprintf("Request response info: %t", *cp.RequestResponseInfo))
+	}
+	if len(cp.AuthenticationMethod) > 0 {
+		fields = append(fields, fmt.Sprintf("Authentication Method: %s", cp.AuthenticationMethod))
+	}
+	if len(cp.AuthenticationData) > 0 {
+		fields = append(fields, fmt.Sprintf("Authentication Data: ****"))
+	}
+	return fmt.Sprintf("{%s}", strings.Join(fields, ","))
+}
 
 func (cp *ConnectProperties) length() uint32 {
 	propertyLen := uint32(0)
@@ -169,6 +200,25 @@ type Connect struct {
 	ClientID        string
 	UserName        string
 	Password        []byte
+}
+
+func (c *Connect) String() string {
+	fields := fmt.Sprintf(`Protocol Name: %s Version: %X
+		Clean start: %t Keep alive: %d Will flag: %t Properties: %s`,
+		c.protocolName, c.protocolVersion, c.CleanStart, c.KeepAlive, c.WillFlag, c.Properties)
+
+	if len(c.ClientID) > 0 {
+		fields += fmt.Sprintf(", Client ID: %s", c.ClientID)
+	}
+
+	if len(c.UserName) > 0 {
+		fields += fmt.Sprintf(", User name: %s", c.UserName)
+	}
+
+	if len(c.Password) > 0 {
+		fields += fmt.Sprintf(", Password: ***")
+	}
+	return fields
 }
 
 func (c *Connect) propertyLength() uint32 {

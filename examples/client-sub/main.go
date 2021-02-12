@@ -124,8 +124,8 @@ func main() {
 		}
 	}()
 	// subscribe
-	subscriptions := []mqtt.Subscription{}
-	subscriptions = append(subscriptions, mqtt.Subscription{TopicFilter: topic, QoSLevel: byte(qosLevel)})
+	subscriptions := []*mqtt.Subscription{}
+	subscriptions = append(subscriptions, &mqtt.Subscription{TopicFilter: topic, QoSLevel: byte(qosLevel)})
 
 	suback, err := client.Subscribe(context.Background(), &mqtt.Subscribe{Subscriptions: subscriptions}, recvr)
 	if err != nil {

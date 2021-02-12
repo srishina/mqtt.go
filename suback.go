@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/srishina/mqtt.go/internal/mqttutil"
 	"github.com/srishina/mqtt.go/internal/packettype"
@@ -77,6 +78,14 @@ type SubAckProperties struct {
 	UserProperty map[string]string
 }
 
+func (sp *SubAckProperties) String() string {
+	var fields []string
+	if len(sp.ReasonString) > 0 {
+		fields = append(fields, fmt.Sprintf("Reason string: %s", sp.ReasonString))
+	}
+	return fmt.Sprintf("{%s}", strings.Join(fields, ","))
+}
+
 func (sp *SubAckProperties) length() uint32 {
 	propertyLen := uint32(0)
 	propertyLen += properties.EncodedSize.FromUTF8String(sp.ReasonString)
@@ -137,6 +146,10 @@ type SubAck struct {
 	packetID    uint16
 	Properties  *SubAckProperties
 	ReasonCodes []SubAckReasonCode
+}
+
+func (s *SubAck) String() string {
+	return fmt.Sprintf(`Reason codes: [% x] Properties: %s`, s.ReasonCodes, s.Properties)
 }
 
 func (s *SubAck) propertyLength() uint32 {

@@ -75,7 +75,7 @@ func TestBasic(t *testing.T) {
 	defer client.Disconnect(context.Background(), &Disconnect{})
 
 	recvr := NewMessageReceiver()
-	s := &Subscribe{Subscriptions: []Subscription{{TopicFilter: "TEST/GREETING", QoSLevel: 1}}}
+	s := &Subscribe{Subscriptions: []*Subscription{{TopicFilter: "TEST/GREETING", QoSLevel: 1}}}
 	suback, err := client.Subscribe(context.Background(), s, recvr)
 	require.NoError(t, err, "MQTT client subscribe failed")
 	require.Equal(t, 1, len(suback.ReasonCodes))
@@ -134,7 +134,7 @@ func TestSubUnsubCallback(t *testing.T) {
 	require.Equal(t, ConnAckReasonCodeSuccess, connack.ReasonCode)
 	defer client.Disconnect(context.Background(), &Disconnect{})
 
-	s := &Subscribe{Subscriptions: []Subscription{{TopicFilter: "TEST/GREETING", QoSLevel: 1}}}
+	s := &Subscribe{Subscriptions: []*Subscription{{TopicFilter: "TEST/GREETING", QoSLevel: 1}}}
 	suback, err := client.CallbackSubscribe(context.Background(), s, func(m *Publish) {
 	})
 
@@ -218,7 +218,7 @@ func recvPublish(t *testing.T, publishResponses map[packettype.PacketType]contro
 
 	pubRecvd := make(chan struct{}, 1)
 	var receivedPayload string
-	s := &Subscribe{Subscriptions: []Subscription{{TopicFilter: "TEST/GREETING/#", QoSLevel: 2}}}
+	s := &Subscribe{Subscriptions: []*Subscription{{TopicFilter: "TEST/GREETING/#", QoSLevel: 2}}}
 	suback, err := client.CallbackSubscribe(context.Background(), s, func(m *Publish) {
 		receivedPayload = string(m.Payload)
 		close(pubRecvd)
@@ -323,7 +323,7 @@ func TestAutoSubscribeAfterReconnect(t *testing.T) {
 	require.Equal(t, ConnAckReasonCodeSuccess, connack.ReasonCode)
 
 	recvr := NewMessageReceiver()
-	s := &Subscribe{Subscriptions: []Subscription{{TopicFilter: "TEST/GREETING", QoSLevel: 1}}}
+	s := &Subscribe{Subscriptions: []*Subscription{{TopicFilter: "TEST/GREETING", QoSLevel: 1}}}
 	suback, err := client.Subscribe(context.Background(), s, recvr)
 	require.NoError(t, err, "MQTT client subscribe failed")
 	require.Equal(t, 1, len(suback.ReasonCodes))
@@ -445,13 +445,13 @@ func TestCloseClientInDisconnectedState(t *testing.T) {
 
 func TestSusbcriptionCache(t *testing.T) {
 	cache := subscriptionCache{}
-	s := &Subscribe{Subscriptions: []Subscription{
+	s := &Subscribe{Subscriptions: []*Subscription{
 		{TopicFilter: "TEST/GREETING", QoSLevel: 1},
 		{TopicFilter: "TEST/GREETING2", QoSLevel: 1},
 		{TopicFilter: "TEST/GREETING3", QoSLevel: 1},
 	}}
 
-	s2 := &Subscribe{Subscriptions: []Subscription{
+	s2 := &Subscribe{Subscriptions: []*Subscription{
 		{TopicFilter: "FOO/GREETING", QoSLevel: 1},
 		{TopicFilter: "FOO/GREETING2", QoSLevel: 1},
 		{TopicFilter: "FOO/GREETING3", QoSLevel: 1},

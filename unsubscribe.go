@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/srishina/mqtt.go/internal/mqttutil"
 	"github.com/srishina/mqtt.go/internal/properties"
@@ -12,6 +13,10 @@ import (
 // UnsubscribeProperties MQTT UNSUBSCRIBE properties
 type UnsubscribeProperties struct {
 	UserProperty map[string]string
+}
+
+func (usp *UnsubscribeProperties) String() string {
+	return ""
 }
 
 func (usp *UnsubscribeProperties) length() uint32 {
@@ -63,6 +68,10 @@ type Unsubscribe struct {
 	packetID     uint16
 	Properties   *UnsubscribeProperties
 	TopicFilters []string
+}
+
+func (us *Unsubscribe) String() string {
+	return fmt.Sprintf(`Topic filters: %s Properties: %s`, strings.Join(us.TopicFilters, ","), us.Properties)
 }
 
 func (us *Unsubscribe) propertyLength() uint32 {

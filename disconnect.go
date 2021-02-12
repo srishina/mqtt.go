@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/srishina/mqtt.go/internal/mqttutil"
 	"github.com/srishina/mqtt.go/internal/packettype"
@@ -118,6 +119,20 @@ type DisconnectProperties struct {
 	ServerReference       string
 }
 
+func (dp *DisconnectProperties) String() string {
+	var fields []string
+	if dp.SessionExpiryInterval != nil {
+		fields = append(fields, fmt.Sprintf("Session expiry interval: %d", *dp.SessionExpiryInterval))
+	}
+	if len(dp.ReasonString) > 0 {
+		fields = append(fields, fmt.Sprintf("Reason string: %s", dp.ReasonString))
+	}
+	if len(dp.ServerReference) > 0 {
+		fields = append(fields, fmt.Sprintf("Server reference: %s", dp.ServerReference))
+	}
+	return fmt.Sprintf("{%s}", strings.Join(fields, ","))
+}
+
 func (dp *DisconnectProperties) length() uint32 {
 	propertyLen := uint32(0)
 	propertyLen += properties.EncodedSize.FromUint32(dp.SessionExpiryInterval)
@@ -194,6 +209,10 @@ func (dp *DisconnectProperties) decode(r io.Reader, propertyLen uint32) error {
 type Disconnect struct {
 	ReasonCode DisconnectReasonCode
 	Properties *DisconnectProperties
+}
+
+func (d *Disconnect) String() string {
+	return fmt.Sprintf(`Reason code: %d Properties: %s`, d.ReasonCode, d.Properties)
 }
 
 func (d *Disconnect) propertyLength() uint32 {
