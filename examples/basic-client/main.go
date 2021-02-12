@@ -5,7 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	mqtt "github.com/srishina/mqtt.go"
 )
@@ -15,7 +19,6 @@ var usageStr = `
 
 	Options:
 		-b, --broker <broker address> MQTTv5 broker address"
-		-c, --conntype <connection type> Connection type - default: ws"
 		-id, --clientid <client ID> Client identifier - optional"
 		-k, --keepalive <keep alive> Keep alive - optional, default: 0"
 		-cs, --cleanstart <Clean start> Start clean - a new session is created in broker - optional, default: true"
@@ -42,14 +45,10 @@ func main() {
 		clientID   string
 		keepAlive  int
 		cleanStart bool
-		connType   string
 	)
 
 	flag.StringVar(&broker, "b", "", "MQTTv5 broker address")
 	flag.StringVar(&broker, "broker", "", "MQTTv5 broker address")
-	flag.StringVar(&connType, "c", "ws", "Connection type (ws or tcp)")
-	flag.StringVar(&connType, "conntype", "ws", "Connection type (ws or tcp)")
-
 	flag.StringVar(&clientID, "id", "", "Client identifier")
 	flag.StringVar(&clientID, "clientid", "", "Client identifier")
 	flag.IntVar(&keepAlive, "k", 0, "Keep alive")
@@ -66,10 +65,20 @@ func main() {
 		usage()
 	}
 
+	u, err := url.Parse(broker)
+	if err != nil {
+		log.Fatal(err)
+	}
 	var conn mqtt.Connection
-	conn = &mqtt.WebsocketConn{Host: broker}
-	if connType == "tcp" {
-		conn = &mqtt.TCPConn{Host: broker}
+	switch u.Scheme {
+	case "ws":
+		fallthrough
+	case "wss":
+		conn = &mqtt.WebsocketConn{Host: broker}
+	case "tcp":
+		conn = &mqtt.TCPConn{Host: u.Host}
+	default:
+		log.Fatal("Invalid scheme name")
 	}
 
 	client := mqtt.NewClient(conn)
@@ -81,6 +90,24 @@ func main() {
 	}
 
 	log.Printf("Broker returned CONNACK - %v", connack)
+
+	if keepAlive != 0 {
+		exitIn := keepAlive * 2
+		fmt.Printf("\r- Will exit in %dsecs OR Press Ctrl+C to exit\n", exitIn)
+		shutdownCh := make(chan struct{})
+		go func() {
+			c := make(chan os.Signal)
+			signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+			select {
+			case <-time.After(time.Duration(exitIn) * time.Second):
+			case <-c:
+			}
+			close(shutdownCh)
+		}()
+		select {
+		case <-shutdownCh:
+		}
+	}
 
 	// Disconnect from broker
 	client.Disconnect(context.Background(), &mqtt.Disconnect{ReasonCode: mqtt.DisconnectReasonCodeNormalDisconnect})

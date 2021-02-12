@@ -5,11 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
 	"sync"
 	"syscall"
+	"time"
 
 	mqtt "github.com/srishina/mqtt.go"
 )
@@ -49,13 +51,10 @@ func main() {
 		clientID   string
 		keepAlive  int
 		cleanStart bool
-		connType   string
 	)
 
 	flag.StringVar(&broker, "b", "", "MQTTv5 broker address")
 	flag.StringVar(&broker, "broker", "", "MQTTv5 broker address")
-	flag.StringVar(&connType, "c", "ws", "Connection type (ws or tcp)")
-	flag.StringVar(&connType, "conntype", "ws", "Connection type (ws or tcp)")
 	flag.StringVar(&clientID, "id", "", "Client identifier")
 	flag.StringVar(&clientID, "clientid", "", "Client identifier")
 	flag.IntVar(&keepAlive, "k", 0, "Keep alive")
@@ -77,16 +76,26 @@ func main() {
 		usage()
 	}
 
+	u, err := url.Parse(broker)
+	if err != nil {
+		log.Fatal(err)
+	}
 	var conn mqtt.Connection
-	conn = &mqtt.WebsocketConn{Host: broker}
-	if connType == "tcp" {
-		conn = &mqtt.TCPConn{Host: broker}
+	switch u.Scheme {
+	case "ws":
+		fallthrough
+	case "wss":
+		conn = &mqtt.WebsocketConn{Host: broker}
+	case "tcp":
+		conn = &mqtt.TCPConn{Host: u.Host}
+	default:
+		log.Fatal("Invalid scheme name")
 	}
 
 	client := mqtt.NewClient(conn)
 	mqttConnect := mqtt.Connect{KeepAlive: uint16(keepAlive), CleanStart: cleanStart, ClientID: clientID}
 
-	_, err := client.Connect(context.Background(), &mqttConnect)
+	_, err = client.Connect(context.Background(), &mqttConnect)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -140,10 +149,14 @@ func main() {
 		break
 	}
 
-	_, err = client.Unsubscribe(context.Background(), &mqtt.Unsubscribe{TopicFilters: []string{topic}})
-	if err != nil {
-		log.Println("UNSUBSCRIBE returned error ", err)
-	}
+	func() {
+		withTimeOut, cancelFn := context.WithTimeout(context.Background(), time.Duration(1)*time.Second)
+		defer cancelFn()
+		_, err = client.Unsubscribe(withTimeOut, &mqtt.Unsubscribe{TopicFilters: []string{topic}})
+		if err != nil {
+			log.Println("UNSUBSCRIBE returned error ", err)
+		}
+	}()
 
 	// Disconnect from broker
 	client.Disconnect(context.Background(), &mqtt.Disconnect{ReasonCode: mqtt.DisconnectReasonCodeNormalDisconnect})

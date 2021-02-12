@@ -72,6 +72,7 @@ type completionNotifier interface {
 	complete(msgID uint16, err error, result interface{})
 	completePublishQoS1(pkt *Publish)
 	completePublishQoS2(msgID uint16)
+	publishQoS12SlotAvailable()
 }
 
 // MessageHandler callback that is invoked when a new PUBLISH
@@ -424,10 +425,9 @@ func (c *Client) connect(ctx context.Context) (*protocolHandler, *ConnAck, error
 	}
 
 	ph := protocolHandler{options: &c.options,
-		rw:                        rw,
-		packetsToSend:             newPacketQueue(),
-		qos12PublishPacketSlotAvb: make(chan struct{}, 1),
-		stop:                      make(chan struct{}),
+		rw:            rw,
+		packetsToSend: newPacketQueue(),
+		stop:          make(chan struct{}),
 	}
 
 	var wg sync.WaitGroup
@@ -597,7 +597,7 @@ func (c *Client) protocolHandler(ph *protocolHandler, connAckPkt *ConnAck) {
 			}
 			stopping = true
 		case err = <-c.notifyOnClose:
-		case <-ph.qos12PublishPacketSlotAvb:
+		case <-c.state.qos12PublishPacketSlotAvb:
 			i := 0
 			for j, pkt := range pendingQoS12PublishPackets {
 				if ph.semServerRecvMax.TryAcquire(1) {
@@ -624,7 +624,7 @@ func (c *Client) protocolHandler(ph *protocolHandler, connAckPkt *ConnAck) {
 		case <-continuation:
 		}
 
-		if d != nil {
+		if d != nil && ph != nil {
 			if err := ph.sendPacket(d); err != nil {
 				log.Warnf("Client is stopping, failed to send DISCONNECT message to broker error %v", err)
 			}
@@ -644,7 +644,10 @@ func (c *Client) protocolHandler(ph *protocolHandler, connAckPkt *ConnAck) {
 		c.conn.Close() // close the underlying connection
 
 		// wait for PH goroutines to stop
-		ph.waitForCompletion()
+		// if we are not connected then, ph is not present
+		if ph != nil {
+			ph.waitForCompletion()
+		}
 
 		if stopping {
 			return
@@ -671,7 +674,9 @@ func (c *Client) protocolHandler(ph *protocolHandler, connAckPkt *ConnAck) {
 		go func() {
 			defer c.wg.Done()
 			ph, connack, err = c.reconnect(reconnectCtx)
-			pendingQoS12PublishPackets = onconnected()
+			if err == nil {
+				pendingQoS12PublishPackets = onconnected()
+			}
 			close(reconnected)
 		}()
 		select {
@@ -769,23 +774,34 @@ func (c *Client) completePublishQoS2(id uint16) {
 	c.state.mu.Unlock()
 }
 
+func (c *Client) publishQoS12SlotAvailable() {
+	c.state.mu.Lock()
+	// signal that we now have a new slot for publish with QoS 1 & 2 packet
+	// and if it is already signalled then we can keep going, protocolHandler will
+	// schedule the packets for the number of free slots
+	select {
+	case c.state.qos12PublishPacketSlotAvb <- struct{}{}:
+	default:
+	}
+	c.state.mu.Unlock()
+}
+
 type protocolHandler struct {
-	options                   *clientOptions
-	wg                        sync.WaitGroup
-	rw                        io.ReadWriter
-	packetStore               clientStatePacketStore
-	packetsToSend             *packetQueue
-	notifer                   completionNotifier
-	incomingPublishQ          *mqttutil.SyncQueue
-	keepAliveTimeout          time.Duration
-	keepAliveTicker           *time.Ticker
-	pingRespRecvd             chan struct{}
-	errWhenClosed             chan<- error
-	semServerRecvMax          *semaphore.Weighted
-	qos12PublishPacketSlotAvb chan struct{}
-	stopCloseOnce             sync.Once
-	stop                      chan struct{}
-	mu                        sync.Mutex
+	options          *clientOptions
+	wg               sync.WaitGroup
+	rw               io.ReadWriter
+	packetStore      clientStatePacketStore
+	packetsToSend    *packetQueue
+	notifer          completionNotifier
+	incomingPublishQ *mqttutil.SyncQueue
+	keepAliveTimeout time.Duration
+	keepAliveTicker  *time.Ticker
+	pingRespRecvd    chan struct{}
+	errWhenClosed    chan<- error
+	semServerRecvMax *semaphore.Weighted
+	stopCloseOnce    sync.Once
+	stop             chan struct{}
+	mu               sync.Mutex
 }
 
 func (c *protocolHandler) connect(mqttConnect *Connect) (*ConnAck, error) {
@@ -794,6 +810,9 @@ func (c *protocolHandler) connect(mqttConnect *Connect) (*ConnAck, error) {
 	}
 	// receive the connack
 	pkt, err := readFrom(c.rw)
+	if err != nil {
+		return nil, err
+	}
 	connAckPkt, ok := pkt.(*ConnAck)
 	if !ok {
 		c.disconnect(&Disconnect{ReasonCode: DisconnectReasonCodeProtocolError})
@@ -993,14 +1012,8 @@ func (c *protocolHandler) publishHandler(msg *Publish) error {
 func (c *protocolHandler) outgoingPublishCompleted() {
 	// release a semaphore
 	c.semServerRecvMax.Release(1)
-
 	// signal that we now have a new slot for publish with QoS 1 & 2 packet
-	// and if it is already signalled then we can keep going, protocolHandler will
-	// schedule the packets for the number of free slots
-	select {
-	case c.qos12PublishPacketSlotAvb <- struct{}{}:
-	default:
-	}
+	c.notifer.publishQoS12SlotAvailable()
 }
 
 func (c *protocolHandler) pubAckHandler(pkt *PubAck) error {
@@ -1191,13 +1204,14 @@ func (p *packetQueue) pop() controlPacket {
 type clientState struct {
 	// as we allow client to publish and (un)subscribe even when not connected
 	// we need to synchronize the data
-	mu                 sync.Mutex
-	connected          bool
-	packetsToSend      chan controlPacket
-	pendingRequests    map[uint16]*request
-	incomingPackets    map[uint16]controlPacket
-	outgoingPackets    map[uint16]controlPacket
-	clientTopicAliases map[uint16]string
+	mu                        sync.Mutex
+	connected                 bool
+	packetsToSend             chan controlPacket
+	qos12PublishPacketSlotAvb chan struct{}
+	pendingRequests           map[uint16]*request
+	incomingPackets           map[uint16]controlPacket
+	outgoingPackets           map[uint16]controlPacket
+	clientTopicAliases        map[uint16]string
 }
 
 type clientStatePacketStore interface {
@@ -1207,11 +1221,12 @@ type clientStatePacketStore interface {
 
 func newClientState() *clientState {
 	return &clientState{
-		pendingRequests:    make(map[uint16]*request),
-		incomingPackets:    make(map[uint16]controlPacket),
-		outgoingPackets:    make(map[uint16]controlPacket),
-		clientTopicAliases: make(map[uint16]string),
-		packetsToSend:      make(chan controlPacket, 4),
+		pendingRequests:           make(map[uint16]*request),
+		incomingPackets:           make(map[uint16]controlPacket),
+		outgoingPackets:           make(map[uint16]controlPacket),
+		clientTopicAliases:        make(map[uint16]string),
+		packetsToSend:             make(chan controlPacket, 4),
+		qos12PublishPacketSlotAvb: make(chan struct{}, 1),
 	}
 }
 

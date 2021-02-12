@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"strconv"
 
@@ -16,7 +17,6 @@ var usageStr = `
 
 	Options:
 		-b, --broker <broker address> MQTTv5 broker address"
-		-c, --conntype <connection type> Connection type - default: ws"
 		-id, --clientid <client ID> Client identifier - optional"
 		-k, --keepalive <keep alive> Keep alive - optional, default: 0"
 		-cs, --cleanstart <Clean start> Start clean - a new session is created in broker - optional, default: true"
@@ -46,14 +46,10 @@ func main() {
 		clientID   string
 		keepAlive  int
 		cleanStart bool
-		connType   string
 	)
 
 	flag.StringVar(&broker, "b", "", "MQTTv5 broker address")
 	flag.StringVar(&broker, "broker", "", "MQTTv5 broker address")
-	flag.StringVar(&connType, "c", "ws", "Connection type (ws or tcp)")
-	flag.StringVar(&connType, "conntype", "ws", "Connection type (ws or tcp)")
-
 	flag.StringVar(&clientID, "id", "", "Client identifier")
 	flag.StringVar(&clientID, "clientid", "", "Client identifier")
 	flag.IntVar(&keepAlive, "k", 0, "Keep alive")
@@ -75,16 +71,26 @@ func main() {
 		usage()
 	}
 
+	u, err := url.Parse(broker)
+	if err != nil {
+		log.Fatal(err)
+	}
 	var conn mqtt.Connection
-	conn = &mqtt.WebsocketConn{Host: broker}
-	if connType == "tcp" {
-		conn = &mqtt.TCPConn{Host: broker}
+	switch u.Scheme {
+	case "ws":
+		fallthrough
+	case "wss":
+		conn = &mqtt.WebsocketConn{Host: broker}
+	case "tcp":
+		conn = &mqtt.TCPConn{Host: u.Host}
+	default:
+		log.Fatal("Invalid scheme name")
 	}
 
 	client := mqtt.NewClient(conn)
 	mqttConnect := mqtt.Connect{KeepAlive: uint16(keepAlive), CleanStart: cleanStart, ClientID: clientID}
 
-	_, err := client.Connect(context.Background(), &mqttConnect)
+	_, err = client.Connect(context.Background(), &mqttConnect)
 	if err != nil {
 		log.Fatal(err)
 	}
