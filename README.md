@@ -35,6 +35,11 @@ Subscribe to a message:
 ```bash
 go run ./client-sub/main.go -b ws://mqtt.eclipseprojects.io:80/mqtt "TEST/GREETING/#" 1
 ```
+Will message
+```bash
+go run ./client-will-msg/main.go -b ws://mqtt.eclipseprojects.io:80/mqtt --will-delay-interval 5 "TEST/GREETING/WILL" 1 "The Will message" "TEST/GREETING/#" 1
+```
+
 
 # How the network reconnect is handled in the library?
 
