@@ -106,3 +106,47 @@ func TestCodecConnectPacketWithProperties(t *testing.T) {
 		t.Errorf("Connect.encode did not return expected bytes %v but %v ", encoded, buf.Bytes())
 	}
 }
+
+func TestCodecConnectPacketWithWillMessage(t *testing.T) {
+	encoded := []byte{0x10, 0x38,
+		0x00, 0x04, 0x4d, 0x51, 0x54, 0x54, // MQTT
+		0x05, // protocol version
+		0xCE,
+		0x00, 0x18, // Keep alive - 24
+		0x08,             // properties
+		0x21, 0x00, 0x0A, // receive maximum
+		0x27, 0x00, 0x00, 0x04, 0x00, // maximum packet size
+		0x00, 0x00, // client id
+		0x05,
+		0x18, 0x00, 0x00, 0x04, 0x00,
+		0x00, 0x03, 0x61, 0x2F, 0x62,
+		0x00, 0x08, 0x57, 0x65, 0x6C, 0x63, 0x6F, 0x6D, 0x65, 0x21,
+		0x00, 0x05, 0x68, 0x65, 0x6C, 0x6C, 0x6F, // username - "hello"
+		0x00, 0x05, 0x77, 0x6F, 0x72, 0x6C, 0x64, // password - "world"
+	}
+
+	reader := bytes.NewBuffer(encoded)
+	byte0, remainingLength, err := readFixedHeader(reader)
+	require.NoError(t, err, "Decoding CONNECT fixed header returned error")
+
+	require.Equal(t, packettype.CONNECT, packettype.PacketType(byte0>>4))
+	require.Equal(t, uint32(0x38), remainingLength)
+
+	c := Connect{}
+	err = c.decode(reader, remainingLength)
+	require.NoError(t, err, "Connect.decode did returned an error")
+	require.Equal(t, byte(1), c.WillQoS)
+	require.False(t, c.WillRetain)
+	require.Equal(t, "a/b", c.WillTopic)
+	require.Equal(t, "Welcome!", string(c.WillPayload))
+	require.NotNil(t, c.WillProperties)
+	require.Equal(t, uint32(1024), *c.WillProperties.WillDelayInterval)
+
+	var buf bytes.Buffer
+	err = c.encode(&buf)
+	require.NoError(t, err, "Connect.encode did returned an error")
+
+	if !bytes.Equal(encoded, buf.Bytes()) {
+		t.Errorf("Connect.encode did not return expected bytes %v but %v ", encoded, buf.Bytes())
+	}
+}
