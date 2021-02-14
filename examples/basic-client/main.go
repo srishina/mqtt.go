@@ -89,7 +89,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Printf("Broker returned CONNACK - %v", connack)
+	log.Printf("Broker returned CONNACK - %s", connack)
 
 	if keepAlive != 0 {
 		exitIn := keepAlive * 2

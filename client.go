@@ -62,6 +62,82 @@ func WithReconnectJitter(jitter float32) ClientOption {
 	}
 }
 
+// MessageHandler callback that is invoked when a new PUBLISH
+// message has been received
+type MessageHandler func(*Publish)
+
+// Client represents a MQTT client. An MQTT client can be  used to perform MQTT
+// operations such as connect, publish, subscribe or unsubscribe
+type Client interface {
+	// Connect connect with MQTT broker and send CONNECT MQTT request
+	Connect(ctx context.Context, conn *Connect) (*ConnAck, error)
+
+	// Disconnect disconnect from MQTT broker
+	Disconnect(ctx context.Context, d *Disconnect) error
+
+	// Subscribe send MQTT Subscribe request to the broker with the give Subscribe parameter
+	// and a message channel through which the published messages are returned for the given
+	// subscribed topics.
+	// The given topic filters are validated.
+	// The function waits for the the MQTT SUBSCRIBE response, SubAck, or a packet timeout
+	// configured as part of the Client options
+	// Note: the input Subscribe parameter can contain more than one topic, the associated
+	// MessageReceiver is valid for all the topics present in the given Subscribe.
+	Subscribe(ctx context.Context, s *Subscribe, recvr *MessageReceiver) (*SubAck, error)
+
+	// CallbackSubscribe send MQTT Subscribe request to the broker with the give Subscribe parameter
+	// and a callback handler through which the published messages are returned for the given subscribed topics.
+	// The given topic filters are validated.
+	// The function waits for the the MQTT SUBSCRIBE response, SubAck, or a packet timeout
+	// configured as part of the Client options
+	// Note: the input Subscribe parameter can contain more than one topic, the associated
+	// Callback handler is valid for all the topics present in the given Subscribe.
+	CallbackSubscribe(ctx context.Context, s *Subscribe, cb MessageHandler) (*SubAck, error)
+
+	// Unsubscribe send MQTT UNSUBSCRIBE request to the broker with the give Unsubscribe parameter
+	// The function waits for the the MQTT SUBSCRIBE response, SubAck, or for a packet timeout
+	Unsubscribe(ctx context.Context, us *Unsubscribe) (*UnsubAck, error)
+
+	// Publish send MQTT PUBLISH packet to the MQTT broker. When the QoS is 1 or 2
+	// the function waits for a response from the broker and for QoS 0 the function
+	// complets immediatly after the PUBLISH message is schedule to send.
+	Publish(ctx context.Context, p *Publish) error
+
+	// On map the callback argument with the event name, more than one
+	// callback can be added for a particular event name
+	On(eventName string, callback interface{}) error
+
+	// Off removed the callback associated with the event name
+	Off(eventName string, value interface{}) error
+}
+
+// NewClient creates a new MQTT client
+// An MQTT client can be used to perform MQTT operations such
+// as connect, publish, subscribe or unsubscribe
+func NewClient(conn Connection, opt ...ClientOption) Client {
+	opts := defaultClientOptions
+
+	for _, o := range opt {
+		o(&opts)
+	}
+
+	return &client{conn: conn,
+		options:              opts,
+		pidgenerator:         mqttutil.NewPIDGenerator(),
+		topicMatcher:         mqttutil.NewTopicMatcher(),
+		incomingPublishQueue: mqttutil.NewSyncQueue(16),
+		state:                newClientState(),
+		eventEmitter:         newEventEmitter(),
+		backoff: exponentialBackoff{
+			initialReconnectDelay: time.Duration(opts.initialReconnectDelay) * time.Millisecond,
+			currentInterval:       time.Duration(opts.initialReconnectDelay) * time.Millisecond,
+			maxReconnectDelay:     float64(opts.maxReconnectDelay),
+			jitter:                float64(opts.jitter),
+		},
+		disconnectPkt: make(chan controlPacket, 1),
+		stop:          make(chan struct{})}
+}
+
 type request struct {
 	pkt    controlPacket
 	result chan interface{}
@@ -75,12 +151,8 @@ type completionNotifier interface {
 	publishQoS12SlotAvailable()
 }
 
-// MessageHandler callback that is invoked when a new PUBLISH
-// message has been received
-type MessageHandler func(*Publish)
-
 // Client represents a client object
-type Client struct {
+type client struct {
 	conn                 Connection
 	options              clientOptions
 	mqttConnPkt          *Connect
@@ -98,35 +170,8 @@ type Client struct {
 	stop                 chan struct{}
 }
 
-// NewClient creates a new MQTT client
-// An MQTT client can be used to perform MQTT operations such
-// as connect, publish, subscribe or unsubscribe
-func NewClient(conn Connection, opt ...ClientOption) *Client {
-	opts := defaultClientOptions
-
-	for _, o := range opt {
-		o(&opts)
-	}
-
-	return &Client{conn: conn,
-		options:              opts,
-		pidgenerator:         mqttutil.NewPIDGenerator(),
-		topicMatcher:         mqttutil.NewTopicMatcher(),
-		incomingPublishQueue: mqttutil.NewSyncQueue(16),
-		state:                newClientState(),
-		eventEmitter:         newEventEmitter(),
-		backoff: exponentialBackoff{
-			initialReconnectDelay: time.Duration(opts.initialReconnectDelay) * time.Millisecond,
-			currentInterval:       time.Duration(opts.initialReconnectDelay) * time.Millisecond,
-			maxReconnectDelay:     float64(opts.maxReconnectDelay),
-			jitter:                float64(opts.jitter),
-		},
-		disconnectPkt: make(chan controlPacket, 1),
-		stop:          make(chan struct{})}
-}
-
 // Connect connect with MQTT broker and send CONNECT MQTT request
-func (c *Client) Connect(ctx context.Context, conn *Connect) (*ConnAck, error) {
+func (c *client) Connect(ctx context.Context, conn *Connect) (*ConnAck, error) {
 	c.mqttConnPkt = conn
 	var err error
 	ph, connAckPkt, err := c.connect(ctx)
@@ -144,7 +189,7 @@ func (c *Client) Connect(ctx context.Context, conn *Connect) (*ConnAck, error) {
 }
 
 // Disconnect disconnect from MQTT broker
-func (c *Client) Disconnect(ctx context.Context, d *Disconnect) error {
+func (c *client) Disconnect(ctx context.Context, d *Disconnect) error {
 	c.disconnectPkt <- d
 
 	close(c.stop)
@@ -160,27 +205,12 @@ func (c *Client) Disconnect(ctx context.Context, d *Disconnect) error {
 	return nil
 }
 
-// Subscribe send MQTT Subscribe request to the broker with the give Subscribe parameter
-// and a message channel through which the published messages are returned for the given
-// subscribed topics.
-// The given topic filters are validated.
-// The function waits for the the MQTT SUBSCRIBE response, SubAck, or a packet timeout
-// configured as part of the Client options
-// Note: the input Subscribe parameter can contain more than one topic, the associated
-// MessageReceiver is valid for all the topics present in the given Subscribe.
-func (c *Client) Subscribe(ctx context.Context, s *Subscribe, recvr *MessageReceiver) (*SubAck, error) {
+func (c *client) Subscribe(ctx context.Context, s *Subscribe, recvr *MessageReceiver) (*SubAck, error) {
 	csub := clientSubscription{subscribe: s, recvr: recvr}
 	return c.subscribe(ctx, &csub)
 }
 
-// CallbackSubscribe send MQTT Subscribe request to the broker with the give Subscribe parameter
-// and a callback handler through which the published messages are returned for the given subscribed topics.
-// The given topic filters are validated.
-// The function waits for the the MQTT SUBSCRIBE response, SubAck, or a packet timeout
-// configured as part of the Client options
-// Note: the input Subscribe parameter can contain more than one topic, the associated
-// Callback handler is valid for all the topics present in the given Subscribe.
-func (c *Client) CallbackSubscribe(ctx context.Context, s *Subscribe, cb MessageHandler) (*SubAck, error) {
+func (c *client) CallbackSubscribe(ctx context.Context, s *Subscribe, cb MessageHandler) (*SubAck, error) {
 	recvr := NewMessageReceiver()
 	dispatcher := &messageDispatcher{recvr: recvr, handler: cb}
 	c.wg.Add(1)
@@ -193,21 +223,16 @@ func (c *Client) CallbackSubscribe(ctx context.Context, s *Subscribe, cb Message
 	return suback, err
 }
 
-// On map the callback argument with the event name, more than one
-// callback can be added for a particular event name
-func (c *Client) On(eventName string, callback interface{}) error {
+func (c *client) On(eventName string, callback interface{}) error {
 	return c.eventEmitter.on(eventName, callback)
 }
 
-// Off removed the callback associated with the event name
-func (c *Client) Off(eventName string, value interface{}) error {
+func (c *client) Off(eventName string, value interface{}) error {
 	c.eventEmitter.emit(eventName, value)
 	return nil
 }
 
-// Unsubscribe send MQTT UNSUBSCRIBE request to the broker with the give Unsubscribe parameter
-// The function waits for the the MQTT SUBSCRIBE response, SubAck, or for a packet timeout
-func (c *Client) Unsubscribe(ctx context.Context, us *Unsubscribe) (*UnsubAck, error) {
+func (c *client) Unsubscribe(ctx context.Context, us *Unsubscribe) (*UnsubAck, error) {
 	for _, topicFilter := range us.TopicFilters {
 		clientSub := c.subscriptionCache.getSubscriptionFromCache(topicFilter)
 		if err := c.topicMatcher.Unsubscribe(topicFilter, clientSub); err != nil {
@@ -246,10 +271,7 @@ func (c *Client) Unsubscribe(ctx context.Context, us *Unsubscribe) (*UnsubAck, e
 	return nil, fmt.Errorf("Internal error during UNSUBSCRIBE, invalid typs received")
 }
 
-// Publish send MQTT PUBLISH packet to the MQTT broker. When the QoS is 1 or 2
-// the function waits for a response from the broker and for QoS 0 the function
-// complets immediatly after the PUBLISH message is schedule to send.
-func (c *Client) Publish(ctx context.Context, p *Publish) error {
+func (c *client) Publish(ctx context.Context, p *Publish) error {
 	if err := mqttutil.ValidatePublishTopic(p.TopicName); err != nil {
 		return err
 	}
@@ -305,11 +327,11 @@ func (c *Client) Publish(ctx context.Context, p *Publish) error {
 	return fmt.Errorf("Disconnected - QoS0 packets will be discarded")
 }
 
-func (c *Client) subscribe(ctx context.Context, s *clientSubscription) (*SubAck, error) {
+func (c *client) subscribe(ctx context.Context, s *clientSubscription) (*SubAck, error) {
 	return c.subscribeInternal(ctx, s)
 }
 
-func (c *Client) subscribeInternal(ctx context.Context, s *clientSubscription) (*SubAck, error) {
+func (c *client) subscribeInternal(ctx context.Context, s *clientSubscription) (*SubAck, error) {
 	s.subscribe.packetID = c.pidgenerator.NextID()
 
 	req := &request{pkt: s.subscribe, result: make(chan interface{})}
@@ -348,7 +370,7 @@ func (c *Client) subscribeInternal(ctx context.Context, s *clientSubscription) (
 	return nil, fmt.Errorf("Internal error during SUBSCRIBE, invalid typs received")
 }
 
-func (c *Client) resubscribe(ctx context.Context, s *Subscribe) (*SubAck, error) {
+func (c *client) resubscribe(ctx context.Context, s *Subscribe) (*SubAck, error) {
 	s.packetID = c.pidgenerator.NextID()
 
 	req := &request{pkt: s, result: make(chan interface{})}
@@ -378,7 +400,7 @@ func (c *Client) resubscribe(ctx context.Context, s *Subscribe) (*SubAck, error)
 	return nil, fmt.Errorf("Internal error during SUBSCRIBE, invalid typs received")
 }
 
-func (c *Client) messageDispatcher() error {
+func (c *client) messageDispatcher() error {
 	defer c.wg.Done()
 	for {
 		closed, item := c.incomingPublishQueue.Pop()
@@ -407,7 +429,7 @@ func (c *Client) messageDispatcher() error {
 	return nil
 }
 
-func (c *Client) reconnect(ctx context.Context) (*protocolHandler, *ConnAck, error) {
+func (c *client) reconnect(ctx context.Context) (*protocolHandler, *ConnAck, error) {
 	if len(c.assignedClientID) != 0 {
 		c.mqttConnPkt.ClientID = c.assignedClientID
 	}
@@ -417,7 +439,7 @@ func (c *Client) reconnect(ctx context.Context) (*protocolHandler, *ConnAck, err
 	return c.connect(ctx)
 }
 
-func (c *Client) connect(ctx context.Context) (*protocolHandler, *ConnAck, error) {
+func (c *client) connect(ctx context.Context) (*protocolHandler, *ConnAck, error) {
 	// dial and wait for a connection to succeed or error
 	rw, err := c.conn.Connect(ctx)
 	if err != nil {
@@ -471,7 +493,7 @@ func (c *Client) connect(ctx context.Context) (*protocolHandler, *ConnAck, error
 }
 
 // must be called from state locked context
-func (c *Client) restoreState(ph *protocolHandler, connack *ConnAck, sem *semaphore.Weighted) []controlPacket {
+func (c *client) restoreState(ph *protocolHandler, connack *ConnAck, sem *semaphore.Weighted) []controlPacket {
 	pendingQoS12Pkts := []controlPacket{}
 	// and drain the packetsToSend channel
 	for {
@@ -555,7 +577,7 @@ func (c *Client) restoreState(ph *protocolHandler, connack *ConnAck, sem *semaph
 	return pendingQoS12Pkts
 }
 
-func (c *Client) protocolHandler(ph *protocolHandler, connAckPkt *ConnAck) {
+func (c *client) protocolHandler(ph *protocolHandler, connAckPkt *ConnAck) {
 	defer c.wg.Done()
 
 	var semServerRecvMax *semaphore.Weighted
@@ -706,7 +728,7 @@ func (c *Client) protocolHandler(ph *protocolHandler, connAckPkt *ConnAck) {
 	}
 }
 
-func (c *Client) complete(msgID uint16, err error, result interface{}) {
+func (c *client) complete(msgID uint16, err error, result interface{}) {
 	c.state.mu.Lock()
 	defer c.state.mu.Unlock()
 	if req, ok := c.state.pendingRequests[msgID]; ok {
@@ -729,24 +751,24 @@ func (c *Client) complete(msgID uint16, err error, result interface{}) {
 	c.pidgenerator.FreeID(msgID)
 }
 
-func (c *Client) storeOutgoing(id uint16, pkt controlPacket) {
+func (c *client) storeOutgoing(id uint16, pkt controlPacket) {
 	c.state.mu.Lock()
 	defer c.state.mu.Unlock()
 	// push to the outgoing queue
 	c.state.outgoingPackets[id] = pkt
 }
 
-func (c *Client) storeIncoming(id uint16, pkt controlPacket) {
+func (c *client) storeIncoming(id uint16, pkt controlPacket) {
 	c.state.mu.Lock()
 	defer c.state.mu.Unlock()
 	c.state.incomingPackets[id] = pkt
 }
 
-func (c *Client) completePublishQoS1(pkt *Publish) {
+func (c *client) completePublishQoS1(pkt *Publish) {
 	c.incomingPublishQueue.Push(pkt)
 }
 
-func (c *Client) completePublishQoS2(id uint16) {
+func (c *client) completePublishQoS2(id uint16) {
 	c.state.mu.Lock()
 	if pkt, ok := c.state.incomingPackets[id]; ok {
 		if publishPkt, ok := pkt.(*Publish); ok {
@@ -774,7 +796,7 @@ func (c *Client) completePublishQoS2(id uint16) {
 	c.state.mu.Unlock()
 }
 
-func (c *Client) publishQoS12SlotAvailable() {
+func (c *client) publishQoS12SlotAvailable() {
 	c.state.mu.Lock()
 	// signal that we now have a new slot for publish with QoS 1 & 2 packet
 	// and if it is already signalled then we can keep going, protocolHandler will

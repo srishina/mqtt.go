@@ -13,7 +13,7 @@ import (
 )
 
 type cstClient struct {
-	*Client
+	Client
 }
 
 const (
@@ -22,7 +22,7 @@ const (
 
 var wg sync.WaitGroup
 
-func newClient() (*Client, error) {
+func newClient() (Client, error) {
 	url, _ := url.ParseRequestURI(requestURI)
 	client := NewClient(&WebsocketConn{Host: url.String()})
 	return client, nil
@@ -36,7 +36,7 @@ type setupParams struct {
 	reconnectDelay     int
 }
 
-func setup(responses map[packettype.PacketType]controlPacket, params setupParams) (*Client, error) {
+func setup(responses map[packettype.PacketType]controlPacket, params setupParams) (Client, error) {
 	mqttMock = &mqttMockTester{
 		responses:                 responses,
 		triggerPublishOnsubscribe: params.triggerPublish,
