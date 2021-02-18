@@ -13,8 +13,9 @@ import (
 type Connection interface {
 	BrokerURL() string
 	// Connect MQTT client calls Connect when it needs a io read writer.
-	// If the Connect returns an error the MQTT client will not ask
-	// for a read writer anymore.
+	// If the Connect returns an error during reconenct then the MQTT client will
+	// attempt a reconnect again. The reconnect interval depends on backoff delay
 	Connect(ctx context.Context) (io.ReadWriter, error)
+	// Closes the network connection
 	Close()
 }

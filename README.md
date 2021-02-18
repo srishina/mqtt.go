@@ -39,6 +39,50 @@ Will message
 ```bash
 go run ./client-will-msg/main.go -b ws://mqtt.eclipseprojects.io:80/mqtt --will-delay-interval 5 "TEST/GREETING/WILL" 1 "The Will message" "TEST/GREETING/#" 1
 ```
+# Network connection - client
+
+The client library provides a possibility to provision a connection. The implementation of the "Connection" interface needs to be passed when initializing the client.
+```go
+    // Connection represents a connection that the MQTT client uses.
+    // The implementation of the Connection is responsible for
+    // initialization of the connection(tcp, ws etc...) with the broker.
+    // WebsocketConn, TCPConn is provided as part of the library, other
+    // connections can be written by the implementations
+    type Connection interface {
+        BrokerURL() string
+        // Connect MQTT client calls Connect when it needs a io read writer.
+        // If the Connect returns an error during reconenct then the MQTT client will
+        // attempt a reconnect again. The reconnect interval depends on backoff delay
+        Connect(ctx context.Context) (io.ReadWriter, error)
+        // Closes the network connection
+        Close()
+    }
+```
+
+WebsocketConn, TCPConn implementations are provided as part of the library.
+```go
+e.g
+	u, err := url.Parse(broker)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var conn mqtt.Connection
+	switch u.Scheme {
+	case "ws":
+		fallthrough
+	case "wss":
+		conn = &mqtt.WebsocketConn{Host: broker}
+	case "tcp":
+		conn = &mqtt.TCPConn{Host: u.Host}
+	default:
+		log.Fatal("Invalid scheme name")
+	}
+	client := mqtt.NewClient(conn)
+	mqttConnect := mqtt.Connect{KeepAlive: uint16(keepAlive), CleanStart: cleanStart, ClientID: clientID}
+```
+
+If the default implementations are not suitable and then more sophisticated implementations can be provisioned.
 
 
 # How the network reconnect is handled in the library?
