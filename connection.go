@@ -6,8 +6,8 @@ import (
 )
 
 // Connection represents a connection that the MQTT client uses.
-// The implementation of the MQTTConnection is responsible for
-// initialization of the connection(tcp, ws etc...) with the broker
+// The implementation of the Connection is responsible for
+// initialization of the connection(tcp, ws etc...) with the broker.
 // WebsocketConn, TCPConn is provided as part of the library, other
 // connections can be written by the implementations
 type Connection interface {

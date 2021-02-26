@@ -85,6 +85,50 @@ e.g
 If the default implementations are not suitable and then more sophisticated implementations can be provisioned.
 
 
+# Subscriber overview - client
+
+In order to receive messages published to a topic, the client needs to be subscribe to the interesting topics. The client can either use push or pull mechansim to receive messages. In the pull model the client can decice when to read the messages. The messages are queued internally in the library. The client may run the message receiver in a separate go routine. In the push model the library delivers message to the client asynchronously as the PUBLISH messages are received.
+
+## Pull model
+```go
+e.g
+
+	recvr := mqtt.NewMessageReceiver()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			p, err := recvr.Recv()
+			if err != nil {
+				return
+			}
+			log.Printf("PUBLISH recvd - Topic: %s QoS: %d Payload: %v\n", p.TopicName, p.QoSLevel, string(p.Payload))
+		}
+	}()
+	// subscribe
+	subscriptions := []*mqtt.Subscription{}
+	subscriptions = append(subscriptions, &mqtt.Subscription{TopicFilter: "TEST/GREETING/#", QoSLevel: 2})
+
+	suback, err := client.Subscribe(context.Background(), &mqtt.Subscribe{Subscriptions: subscriptions}, recvr)
+	if err != nil {
+		log.Fatal(err)
+	}
+```
+
+## Push model
+```go
+
+    // The messages are delivered asynchronously. The library does not order messages in this case. The messages
+    // are delivered as it arrives. The callbacks are executed from the library using a go routine.
+
+	s := &Subscribe{Subscriptions: []*Subscription{{TopicFilter: "TEST/GREETING/#", QoSLevel: 2}}}
+	suback, err := client.CallbackSubscribe(context.Background(), s, func(m *Publish) {
+        log.Printf("PUBLISH recvd - Topic: %s QoS: %d Payload: %v\n", p.TopicName, p.QoSLevel, string(p.Payload))
+	})
+
+```
+
 # How the network reconnect is handled in the library?
 
 The client library supports reconnecting and automatically resubscribe / publish the pending messages.

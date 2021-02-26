@@ -430,8 +430,6 @@ func (c *Connect) encode(w io.Writer) error {
 	// 10 = protocolname + version + flags + keepalive
 	remainingLength := 10 + propertyLen + mqttutil.EncodedVarUint32Size(propertyLen) + uint32(2+len(c.ClientID))
 
-	// TODO support will Flag
-
 	connectFlags := byte(0)
 	if c.CleanStart {
 		connectFlags |= 0x02
