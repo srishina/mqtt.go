@@ -145,9 +145,10 @@ If the network connection is dropped, the library tries to reconnect with the br
 2. If the broker has no session state, then the client library resubscribes to the already subscribed topics and send pending messages. For QoS 1 & 2 the library restarts the publish flow again. Note that, in this scenario the resubscription may fail and the client will be notified of the status of the resubscription.
 
 Connection retry uses exponential backoff with jitter.
+
 ```go
 	var opts []ClientOption
-    opts = append(opts, WithInitialReconnectDelay(50))
+	opts = append(opts, WithInitialReconnectDelay(50))
     // other as needed
 	client := NewClient(mqttMock, opts...)
 
