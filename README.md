@@ -149,7 +149,7 @@ Connection retry uses exponential backoff with jitter.
 ```go
 	var opts []ClientOption
 	opts = append(opts, WithInitialReconnectDelay(50))
-    // other as needed
+	// other as needed
 	client := NewClient(mqttMock, opts...)
 
     please see func WithInitialReconnectDelay, WithMaxReconnectDelay, WithReconnectJitter for more information
