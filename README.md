@@ -51,7 +51,7 @@ The client library provides a possibility to provision a connection. The impleme
     type Connection interface {
         BrokerURL() string
         // Connect MQTT client calls Connect when it needs a io read writer.
-        // If the Connect returns an error during reconenct then the MQTT client will
+        // If the Connect returns an error during reconnect then the MQTT client will
         // attempt a reconnect again. The reconnect interval depends on backoff delay
         Connect(ctx context.Context) (io.ReadWriter, error)
         // Closes the network connection
@@ -87,7 +87,7 @@ If the default implementations are not suitable and then more sophisticated impl
 
 # Subscriber overview - client
 
-In order to receive messages published to a topic, the client needs to be subscribe to the interesting topics. The client can either use push or pull mechansim to receive messages. In the pull model the client can decice when to read the messages. The messages are queued internally in the library. The client may run the message receiver in a separate go routine. In the push model the library delivers message to the client asynchronously as the PUBLISH messages are received.
+In order to receive messages published to a topic, the client needs to subscribe to the interesting topics. The client can either use push or pull mechanism to receive messages. In the pull model the client can device when to read the messages. The messages are queued internally in the library. The client may run the message receiver in a separate go routine. In the push model the library delivers message to the client asynchronously as the PUBLISH messages are received.
 
 ## Pull model
 ```go
@@ -124,7 +124,7 @@ e.g
 
 	s := &Subscribe{Subscriptions: []*Subscription{{TopicFilter: "TEST/GREETING/#", QoSLevel: 2}}}
 	suback, err := client.CallbackSubscribe(context.Background(), s, func(m *Publish) {
-        log.Printf("PUBLISH recvd - Topic: %s QoS: %d Payload: %v\n", p.TopicName, p.QoSLevel, string(p.Payload))
+        log.Printf("PUBLISH received - Topic: %s QoS: %d Payload: %v\n", p.TopicName, p.QoSLevel, string(p.Payload))
 	})
 
 ```
@@ -135,7 +135,7 @@ The client library supports reconnecting and automatically resubscribe / publish
 
 MQTTv5 supports the possibility to set whether the session that is initiated with the broker should be clean or a continuation of the last session. In the later case, the session unique identifier is used. The specification also provides an extra property through which the client or the broker can decide how long a session should be kept. The client can set a session expiry interval. However, if the browser specifies a session expiry interval then that value takes precedence. If the client or broker does not specify session expiry interval then the session state is lost when the network connection is dropped.
 
-So in sumamry, clean start + the session expiry interval + the connack response from the broker determines how the client reconnects.
+So in summary, clean start + the session expiry interval + the CONNACK response from the broker determines how the client reconnects.
 
 The library operates as below:
 
