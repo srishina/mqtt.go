@@ -43,43 +43,42 @@ go run ./client-will-msg/main.go -b ws://mqtt.eclipseprojects.io:80/mqtt --will-
 
 The client library provides a possibility to provision a connection. The implementation of the "Connection" interface needs to be passed when initializing the client.
 ```go
-    // Connection represents a connection that the MQTT client uses.
-    // The implementation of the Connection is responsible for
-    // initialization of the connection(tcp, ws etc...) with the broker.
-    // WebsocketConn, TCPConn is provided as part of the library, other
-    // connections can be written by the implementations
-    type Connection interface {
-        BrokerURL() string
-        // Connect MQTT client calls Connect when it needs a io read writer.
-        // If the Connect returns an error during reconnect then the MQTT client will
-        // attempt a reconnect again. The reconnect interval depends on backoff delay
-        Connect(ctx context.Context) (io.ReadWriter, error)
-        // Closes the network connection
-        Close()
-    }
+// Connection represents a connection that the MQTT client uses.
+// The implementation of the Connection is responsible for
+// initialization of the connection(tcp, ws etc...) with the broker.
+// WebsocketConn, TCPConn is provided as part of the library, other
+// connections can be written by the implementations
+type Connection interface {
+	BrokerURL() string
+	// Connect MQTT client calls Connect when it needs a io read writer.
+	// If the Connect returns an error during reconnect then the MQTT client will
+	// attempt a reconnect again. The reconnect interval depends on backoff delay
+	Connect(ctx context.Context) (io.ReadWriter, error)
+	// Closes the network connection
+	Close()
+}
 ```
 
 WebsocketConn, TCPConn implementations are provided as part of the library.
 ```go
-e.g
-	u, err := url.Parse(broker)
-	if err != nil {
-		log.Fatal(err)
-	}
+u, err := url.Parse(broker)
+if err != nil {
+	log.Fatal(err)
+}
 
-	var conn mqtt.Connection
-	switch u.Scheme {
-	case "ws":
-		fallthrough
-	case "wss":
-		conn = &mqtt.WebsocketConn{Host: broker}
-	case "tcp":
-		conn = &mqtt.TCPConn{Host: u.Host}
-	default:
-		log.Fatal("Invalid scheme name")
-	}
-	client := mqtt.NewClient(conn)
-	mqttConnect := mqtt.Connect{KeepAlive: uint16(keepAlive), CleanStart: cleanStart, ClientID: clientID}
+var conn mqtt.Connection
+switch u.Scheme {
+case "ws":
+	fallthrough
+case "wss":
+	conn = &mqtt.WebsocketConn{Host: broker}
+case "tcp":
+	conn = &mqtt.TCPConn{Host: u.Host}
+default:
+	log.Fatal("Invalid scheme name")
+}
+client := mqtt.NewClient(conn)
+mqttConnect := mqtt.Connect{KeepAlive: uint16(keepAlive), CleanStart: cleanStart, ClientID: clientID}
 ```
 
 If the default implementations are not suitable and then more sophisticated implementations can be provisioned.
@@ -91,41 +90,39 @@ In order to receive messages published to a topic, the client needs to subscribe
 
 ## Pull model
 ```go
-e.g
-
-	recvr := mqtt.NewMessageReceiver()
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for {
-			p, err := recvr.Recv()
-			if err != nil {
-				return
-			}
-			log.Printf("PUBLISH recvd - Topic: %s QoS: %d Payload: %v\n", p.TopicName, p.QoSLevel, string(p.Payload))
+recvr := mqtt.NewMessageReceiver()
+var wg sync.WaitGroup
+wg.Add(1)
+go func() {
+	defer wg.Done()
+	for {
+		p, err := recvr.Recv()
+		if err != nil {
+			return
 		}
-	}()
-	// subscribe
-	subscriptions := []*mqtt.Subscription{}
-	subscriptions = append(subscriptions, &mqtt.Subscription{TopicFilter: "TEST/GREETING/#", QoSLevel: 2})
-
-	suback, err := client.Subscribe(context.Background(), &mqtt.Subscribe{Subscriptions: subscriptions}, recvr)
-	if err != nil {
-		log.Fatal(err)
+		log.Printf("PUBLISH recvd - Topic: %s QoS: %d Payload: %v\n", p.TopicName, p.QoSLevel, string(p.Payload))
 	}
+}()
+// subscribe
+subscriptions := []*mqtt.Subscription{}
+subscriptions = append(subscriptions, &mqtt.Subscription{TopicFilter: "TEST/GREETING/#", QoSLevel: 2})
+
+suback, err := client.Subscribe(context.Background(), &mqtt.Subscribe{Subscriptions: subscriptions}, recvr)
+if err != nil {
+	log.Fatal(err)
+}
 ```
 
 ## Push model
 ```go
 
-    // The messages are delivered asynchronously. The library does not order messages in this case. The messages
-    // are delivered as it arrives. The callbacks are executed from the library using a go routine.
+// The messages are delivered asynchronously. The library does not order messages in this case. The messages
+// are delivered as it arrives. The callbacks are executed from the library using a go routine.
 
-	s := &Subscribe{Subscriptions: []*Subscription{{TopicFilter: "TEST/GREETING/#", QoSLevel: 2}}}
-	suback, err := client.CallbackSubscribe(context.Background(), s, func(m *Publish) {
-        log.Printf("PUBLISH received - Topic: %s QoS: %d Payload: %v\n", p.TopicName, p.QoSLevel, string(p.Payload))
-	})
+s := &Subscribe{Subscriptions: []*Subscription{{TopicFilter: "TEST/GREETING/#", QoSLevel: 2}}}
+suback, err := client.CallbackSubscribe(context.Background(), s, func(m *Publish) {
+	log.Printf("PUBLISH received - Topic: %s QoS: %d Payload: %v\n", p.TopicName, p.QoSLevel, string(p.Payload))
+})
 
 ```
 
@@ -147,10 +144,10 @@ If the network connection is dropped, the library tries to reconnect with the br
 Connection retry uses exponential backoff with jitter.
 
 ```go
-	var opts []ClientOption
-	opts = append(opts, WithInitialReconnectDelay(50))
-	// other as needed
-	client := NewClient(mqttMock, opts...)
+var opts []ClientOption
+opts = append(opts, WithInitialReconnectDelay(50))
+// other as needed
+client := NewClient(mqttMock, opts...)
 
-    please see func WithInitialReconnectDelay, WithMaxReconnectDelay, WithReconnectJitter for more information
+please see func WithInitialReconnectDelay, WithMaxReconnectDelay, WithReconnectJitter for more information
 ```
