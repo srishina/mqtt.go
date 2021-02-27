@@ -146,8 +146,6 @@ If the network connection is dropped, the library tries to reconnect with the br
 
 Connection retry uses exponential backoff with jitter.
 ```go
-    an e.g
-
 	var opts []ClientOption
     opts = append(opts, WithInitialReconnectDelay(50))
     // other as needed
