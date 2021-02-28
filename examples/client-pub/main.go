@@ -87,10 +87,13 @@ func main() {
 		log.Fatal("Invalid scheme name")
 	}
 
-	client := mqtt.NewClient(conn)
-	mqttConnect := mqtt.Connect{KeepAlive: uint16(keepAlive), CleanStart: cleanStart, ClientID: clientID}
+	var opts []mqtt.ClientOption
+	opts = append(opts, mqtt.WithCleanStart(cleanStart))
+	opts = append(opts, mqtt.WithKeepAlive(uint16(keepAlive)))
+	opts = append(opts, mqtt.WithClientID(clientID))
 
-	_, err = client.Connect(context.Background(), &mqttConnect)
+	client := mqtt.NewClient(conn, opts...)
+	_, err = client.Connect(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -106,11 +109,11 @@ func main() {
 	}
 
 	// publish
-	err = client.Publish(context.Background(), &mqtt.Publish{TopicName: topic, QoSLevel: byte(qosLevel), Payload: []byte(payload)})
+	err = client.Publish(context.Background(), topic, byte(qosLevel), false, []byte(payload), nil)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Disconnect from broker
-	client.Disconnect(context.Background(), &mqtt.Disconnect{ReasonCode: mqtt.DisconnectReasonCodeNormalDisconnect})
+	client.Disconnect(context.Background(), mqtt.DisconnectReasonCodeNormal, nil)
 }

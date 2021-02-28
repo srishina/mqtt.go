@@ -77,8 +77,12 @@ case "tcp":
 default:
 	log.Fatal("Invalid scheme name")
 }
-client := mqtt.NewClient(conn)
-mqttConnect := mqtt.Connect{KeepAlive: uint16(keepAlive), CleanStart: cleanStart, ClientID: clientID}
+var opts []mqtt.ClientOption
+opts = append(opts, mqtt.WithCleanStart(cleanStart))
+opts = append(opts, mqtt.WithKeepAlive(uint16(keepAlive)))
+opts = append(opts, mqtt.WithClientID(clientID))
+
+client := mqtt.NewClient(conn, opts...)
 ```
 
 If the default implementations are not suitable and then more sophisticated implementations can be provisioned.
@@ -107,7 +111,7 @@ go func() {
 subscriptions := []*mqtt.Subscription{}
 subscriptions = append(subscriptions, &mqtt.Subscription{TopicFilter: "TEST/GREETING/#", QoSLevel: 2})
 
-suback, err := client.Subscribe(context.Background(), &mqtt.Subscribe{Subscriptions: subscriptions}, recvr)
+suback, err := client.Subscribe(context.Background(), subscriptions, nil, recvr)
 if err != nil {
 	log.Fatal(err)
 }
@@ -119,8 +123,8 @@ if err != nil {
 // The messages are delivered asynchronously. The library does not order messages in this case. The messages
 // are delivered as it arrives. The callbacks are executed from the library using a go routine.
 
-s := &Subscribe{Subscriptions: []*Subscription{{TopicFilter: "TEST/GREETING/#", QoSLevel: 2}}}
-suback, err := client.CallbackSubscribe(context.Background(), s, func(m *Publish) {
+s := []*Subscription{{TopicFilter: "TEST/GREETING/#", QoSLevel: 2}}
+suback, err := client.CallbackSubscribe(context.Background(), s, nil, func(m *Publish) {
 	log.Printf("PUBLISH received - Topic: %s QoS: %d Payload: %v\n", p.TopicName, p.QoSLevel, string(p.Payload))
 })
 

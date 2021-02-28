@@ -16,7 +16,7 @@ import (
 type DisconnectReasonCode byte
 
 const (
-	DisconnectReasonCodeNormalDisconnect                  DisconnectReasonCode = DisconnectReasonCode(reasoncode.Success)
+	DisconnectReasonCodeNormal                            DisconnectReasonCode = DisconnectReasonCode(reasoncode.Success)
 	DisconnectReasonCodeWithWillMessage                   DisconnectReasonCode = 0x04
 	DisconnectReasonCodeUnspecifiedError                  DisconnectReasonCode = DisconnectReasonCode(reasoncode.UnspecifiedError)
 	DisconnectReasonCodeMalformedPacket                   DisconnectReasonCode = DisconnectReasonCode(reasoncode.MalformedPacket)
@@ -48,7 +48,7 @@ const (
 )
 
 var disconnectReasonCodeText = map[DisconnectReasonCode]string{
-	DisconnectReasonCodeNormalDisconnect:                  reasoncode.Success.Text(),
+	DisconnectReasonCodeNormal:                            reasoncode.Success.Text(),
 	DisconnectReasonCodeWithWillMessage:                   "Disconnect with Will Message",
 	DisconnectReasonCodeUnspecifiedError:                  reasoncode.UnspecifiedError.Text(),
 	DisconnectReasonCodeMalformedPacket:                   reasoncode.MalformedPacket.Text(),
@@ -80,7 +80,7 @@ var disconnectReasonCodeText = map[DisconnectReasonCode]string{
 }
 
 var disconnectReasonCodeDesc = map[DisconnectReasonCode]string{
-	DisconnectReasonCodeNormalDisconnect:                  "Close the connection normally. Do not send the Will Message.",
+	DisconnectReasonCodeNormal:                            "Close the connection normally. Do not send the Will Message.",
 	DisconnectReasonCodeWithWillMessage:                   "The Client wishes to disconnect but requires that the Server also publishes its Will Message.",
 	DisconnectReasonCodeUnspecifiedError:                  "The Connection is closed but the sender either does not wish to reveal the reason, or none of the other Reason Codes apply.",
 	DisconnectReasonCodeMalformedPacket:                   "The received packet does not conform to this specification.",

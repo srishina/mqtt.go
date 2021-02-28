@@ -15,7 +15,24 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
+// WillMessage An Application Message which is published by the Server after the Network Connection is closed.
+// The client can set a reason code DisconnectReasonCodeWithWillMessage while disconnecting
+type WillMessage struct {
+	QoS        byte
+	Retain     bool
+	Topic      string
+	Payload    []byte
+	Properties *WillProperties
+}
+
 type clientOptions struct {
+	cleanStart  bool
+	keepAlive   uint16
+	clientID    string
+	willMessage *WillMessage
+	userName    string
+	password    []byte
+	props       *ConnectProperties
 	// in ms
 	initialReconnectDelay int
 	// in ms
@@ -25,6 +42,8 @@ type clientOptions struct {
 }
 
 var defaultClientOptions = clientOptions{
+	cleanStart:            true,
+	keepAlive:             60,
 	initialReconnectDelay: 1000,
 	maxReconnectDelay:     32000,
 	jitter:                0.5,
@@ -62,6 +81,67 @@ func WithReconnectJitter(jitter float32) ClientOption {
 	}
 }
 
+// WithCleanStart indicates whether the client starts a new Session
+// or is a continuation of an existing Session.
+// default: true
+func WithCleanStart(cleanStart bool) ClientOption {
+	return func(o *clientOptions) error {
+		o.cleanStart = cleanStart
+		return nil
+	}
+}
+
+// WithKeepAlive the number of seconds after which the client sends a PINGREQ
+// to the broker if no other messages are exchanged during that time
+// default: 60secs
+func WithKeepAlive(keepAlive uint16) ClientOption {
+	return func(o *clientOptions) error {
+		o.keepAlive = keepAlive
+		return nil
+	}
+}
+
+// WithClientID Identifies the client to the broker, if not set then the broker
+// assigns a client ID automatically
+func WithClientID(clientID string) ClientOption {
+	return func(o *clientOptions) error {
+		o.clientID = clientID
+		return nil
+	}
+}
+
+// WithWillMessage Configures a will message
+func WithWillMessage(willMessage *WillMessage) ClientOption {
+	return func(o *clientOptions) error {
+		o.willMessage = willMessage
+		return nil
+	}
+}
+
+// WithUserName can be used by the broker to authenticatie and authorize the client
+func WithUserName(username string) ClientOption {
+	return func(o *clientOptions) error {
+		o.userName = username
+		return nil
+	}
+}
+
+// WithPassword can be used to carry any credential information
+func WithPassword(password []byte) ClientOption {
+	return func(o *clientOptions) error {
+		o.password = password
+		return nil
+	}
+}
+
+// WithConnectProperties configure connect properties,
+func WithConnectProperties(props *ConnectProperties) ClientOption {
+	return func(o *clientOptions) error {
+		o.props = props
+		return nil
+	}
+}
+
 // MessageHandler callback that is invoked when a new PUBLISH
 // message has been received
 type MessageHandler func(*Publish)
@@ -70,38 +150,36 @@ type MessageHandler func(*Publish)
 // operations such as connect, publish, subscribe or unsubscribe
 type Client interface {
 	// Connect connect with MQTT broker and send CONNECT MQTT request
-	Connect(ctx context.Context, conn *Connect) (*ConnAck, error)
+	Connect(ctx context.Context) (*ConnAck, error)
 
 	// Disconnect disconnect from MQTT broker
-	Disconnect(ctx context.Context, d *Disconnect) error
+	Disconnect(ctx context.Context, reasonCode DisconnectReasonCode, props *DisconnectProperties) error
 
-	// Subscribe send MQTT Subscribe request to the broker with the give Subscribe parameter
-	// and a message channel through which the published messages are returned for the given
+	// Subscribe send MQTT Subscribe request to the broker with the given Subscription parameter and it's
+	// properties, and a message channel through which the published messages are returned for the given
 	// subscribed topics.
-	// The given topic filters are validated.
 	// The function waits for the the MQTT SUBSCRIBE response, SubAck, or a packet timeout
 	// configured as part of the Client options
-	// Note: the input Subscribe parameter can contain more than one topic, the associated
-	// MessageReceiver is valid for all the topics present in the given Subscribe.
-	Subscribe(ctx context.Context, s *Subscribe, recvr *MessageReceiver) (*SubAck, error)
+	// Note: the subscriptions input may contain more than one topic, the associated
+	// MessageReceiver is valid for all the topics present in the given subscriptions.
+	Subscribe(ctx context.Context, subscriptions []*Subscription, props *SubscribeProperties, recvr *MessageReceiver) (*SubAck, error)
 
-	// CallbackSubscribe send MQTT Subscribe request to the broker with the give Subscribe parameter
-	// and a callback handler through which the published messages are returned for the given subscribed topics.
-	// The given topic filters are validated.
+	// CallbackSubscribe send MQTT Subscribe request to the broker with the given Subscription parameter and it's
+	// properties, and a callback handler through which the published messages are returned for the given subscribed topics.
 	// The function waits for the the MQTT SUBSCRIBE response, SubAck, or a packet timeout
 	// configured as part of the Client options
 	// Note: the input Subscribe parameter can contain more than one topic, the associated
 	// Callback handler is valid for all the topics present in the given Subscribe.
-	CallbackSubscribe(ctx context.Context, s *Subscribe, cb MessageHandler) (*SubAck, error)
+	CallbackSubscribe(ctx context.Context, subscriptions []*Subscription, props *SubscribeProperties, cb MessageHandler) (*SubAck, error)
 
-	// Unsubscribe send MQTT UNSUBSCRIBE request to the broker with the give Unsubscribe parameter
+	// Unsubscribe send MQTT UNSUBSCRIBE request to the broker with the given topic filters and it's properties.
 	// The function waits for the the MQTT SUBSCRIBE response, SubAck, or for a packet timeout
-	Unsubscribe(ctx context.Context, us *Unsubscribe) (*UnsubAck, error)
+	Unsubscribe(ctx context.Context, topicFilters []string, props *UnsubscribeProperties) (*UnsubAck, error)
 
 	// Publish send MQTT PUBLISH packet to the MQTT broker. When the QoS is 1 or 2
 	// the function waits for a response from the broker and for QoS 0 the function
-	// complets immediatly after the PUBLISH message is schedule to send.
-	Publish(ctx context.Context, p *Publish) error
+	// complets immediately after the PUBLISH message is scheduled to send.
+	Publish(ctx context.Context, topic string, qosLevel byte, retain bool, payload []byte, props *PublishProperties) error
 
 	// On map the callback argument with the event name, more than one
 	// callback can be added for a particular event name
@@ -171,7 +249,24 @@ type client struct {
 }
 
 // Connect connect with MQTT broker and send CONNECT MQTT request
-func (c *client) Connect(ctx context.Context, conn *Connect) (*ConnAck, error) {
+func (c *client) Connect(ctx context.Context) (*ConnAck, error) {
+	conn := &Connect{CleanStart: c.options.cleanStart,
+		KeepAlive:  c.options.keepAlive,
+		ClientID:   c.options.clientID,
+		WillFlag:   c.options.willMessage != nil,
+		Properties: c.options.props,
+		UserName:   c.options.userName,
+		Password:   c.options.password,
+	}
+
+	if conn.WillFlag {
+		conn.WillQoS = c.options.willMessage.QoS
+		conn.WillRetain = c.options.willMessage.Retain
+		conn.WillTopic = c.options.willMessage.Topic
+		conn.WillPayload = c.options.willMessage.Payload
+		conn.WillProperties = c.options.willMessage.Properties
+	}
+
 	c.mqttConnPkt = conn
 	var err error
 	ph, connAckPkt, err := c.connect(ctx)
@@ -189,7 +284,8 @@ func (c *client) Connect(ctx context.Context, conn *Connect) (*ConnAck, error) {
 }
 
 // Disconnect disconnect from MQTT broker
-func (c *client) Disconnect(ctx context.Context, d *Disconnect) error {
+func (c *client) Disconnect(ctx context.Context, reasonCode DisconnectReasonCode, props *DisconnectProperties) error {
+	d := &Disconnect{ReasonCode: reasonCode, Properties: props}
 	c.disconnectPkt <- d
 
 	close(c.stop)
@@ -205,12 +301,14 @@ func (c *client) Disconnect(ctx context.Context, d *Disconnect) error {
 	return nil
 }
 
-func (c *client) Subscribe(ctx context.Context, s *Subscribe, recvr *MessageReceiver) (*SubAck, error) {
+func (c *client) Subscribe(ctx context.Context, subscriptions []*Subscription, props *SubscribeProperties, recvr *MessageReceiver) (*SubAck, error) {
+	s := &Subscribe{Subscriptions: subscriptions, Properties: props}
 	csub := clientSubscription{subscribe: s, recvr: recvr}
 	return c.subscribe(ctx, &csub)
 }
 
-func (c *client) CallbackSubscribe(ctx context.Context, s *Subscribe, cb MessageHandler) (*SubAck, error) {
+func (c *client) CallbackSubscribe(ctx context.Context, subscriptions []*Subscription, props *SubscribeProperties, cb MessageHandler) (*SubAck, error) {
+	s := &Subscribe{Subscriptions: subscriptions, Properties: props}
 	recvr := NewMessageReceiver()
 	dispatcher := &messageDispatcher{recvr: recvr, handler: cb}
 	c.wg.Add(1)
@@ -232,7 +330,8 @@ func (c *client) Off(eventName string, value interface{}) error {
 	return nil
 }
 
-func (c *client) Unsubscribe(ctx context.Context, us *Unsubscribe) (*UnsubAck, error) {
+func (c *client) Unsubscribe(ctx context.Context, topicFilters []string, props *UnsubscribeProperties) (*UnsubAck, error) {
+	us := &Unsubscribe{TopicFilters: topicFilters, Properties: props}
 	for _, topicFilter := range us.TopicFilters {
 		clientSub := c.subscriptionCache.getSubscriptionFromCache(topicFilter)
 		if err := c.topicMatcher.Unsubscribe(topicFilter, clientSub); err != nil {
@@ -271,7 +370,9 @@ func (c *client) Unsubscribe(ctx context.Context, us *Unsubscribe) (*UnsubAck, e
 	return nil, fmt.Errorf("Internal error during UNSUBSCRIBE, invalid typs received")
 }
 
-func (c *client) Publish(ctx context.Context, p *Publish) error {
+func (c *client) Publish(ctx context.Context, topic string, qosLevel byte, retain bool, payload []byte, props *PublishProperties) error {
+	p := &Publish{TopicName: topic, QoSLevel: qosLevel, Retain: retain, Payload: payload, Properties: props}
+
 	if err := mqttutil.ValidatePublishTopic(p.TopicName); err != nil {
 		return err
 	}

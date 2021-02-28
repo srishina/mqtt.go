@@ -92,10 +92,13 @@ func main() {
 		log.Fatal("Invalid scheme name")
 	}
 
-	client := mqtt.NewClient(conn)
-	mqttConnect := mqtt.Connect{KeepAlive: uint16(keepAlive), CleanStart: cleanStart, ClientID: clientID}
+	var opts []mqtt.ClientOption
+	opts = append(opts, mqtt.WithCleanStart(cleanStart))
+	opts = append(opts, mqtt.WithKeepAlive(uint16(keepAlive)))
+	opts = append(opts, mqtt.WithClientID(clientID))
 
-	_, err = client.Connect(context.Background(), &mqttConnect)
+	client := mqtt.NewClient(conn, opts...)
+	_, err = client.Connect(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -127,7 +130,7 @@ func main() {
 	subscriptions := []*mqtt.Subscription{}
 	subscriptions = append(subscriptions, &mqtt.Subscription{TopicFilter: topic, QoSLevel: byte(qosLevel)})
 
-	suback, err := client.Subscribe(context.Background(), &mqtt.Subscribe{Subscriptions: subscriptions}, recvr)
+	suback, err := client.Subscribe(context.Background(), subscriptions, nil, recvr)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -152,14 +155,14 @@ func main() {
 	func() {
 		withTimeOut, cancelFn := context.WithTimeout(context.Background(), time.Duration(1)*time.Second)
 		defer cancelFn()
-		_, err = client.Unsubscribe(withTimeOut, &mqtt.Unsubscribe{TopicFilters: []string{topic}})
+		_, err = client.Unsubscribe(withTimeOut, []string{topic}, nil)
 		if err != nil {
 			log.Println("UNSUBSCRIBE returned error ", err)
 		}
 	}()
 
 	// Disconnect from broker
-	client.Disconnect(context.Background(), &mqtt.Disconnect{ReasonCode: mqtt.DisconnectReasonCodeNormalDisconnect})
+	client.Disconnect(context.Background(), mqtt.DisconnectReasonCodeNormal, nil)
 
 	wg.Wait()
 }
