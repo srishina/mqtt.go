@@ -101,26 +101,34 @@ func main() {
 		log.Fatal(err)
 	}
 
-	willClient := mqtt.NewClient(willConn)
-	mqttWillConnect := mqtt.Connect{
-		KeepAlive: uint16(keepAlive), CleanStart: cleanStart, ClientID: clientID, WillFlag: true,
-		WillQoS: byte(willQoSLevel), WillTopic: args[0], WillPayload: []byte(args[2]),
+	var willClientOpts []mqtt.ClientOption
+	willClientOpts = append(willClientOpts, mqtt.WithCleanStart(cleanStart))
+	willClientOpts = append(willClientOpts, mqtt.WithKeepAlive(uint16(keepAlive)))
+	willClientOpts = append(willClientOpts, mqtt.WithClientID(clientID))
+	willMsg := &mqtt.WillMessage{
+		QoS:     byte(willQoSLevel),
+		Topic:   args[0],
+		Payload: []byte(args[2]),
 	}
-
 	if willDelayInterval > 0 {
 		interval := uint32(willDelayInterval)
-		mqttWillConnect.WillProperties = &mqtt.WillProperties{WillDelayInterval: &interval}
+		willMsg.Properties = &mqtt.WillProperties{WillDelayInterval: &interval}
 	}
+	willClientOpts = append(willClientOpts, mqtt.WithWillMessage(willMsg))
+	willClient := mqtt.NewClient(willConn, willClientOpts...)
 
-	_, err = willClient.Connect(context.Background(), &mqttWillConnect)
+	_, err = willClient.Connect(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	client := mqtt.NewClient(conn)
-	mqttConnect := mqtt.Connect{KeepAlive: uint16(keepAlive), CleanStart: cleanStart, ClientID: clientID}
+	var opts []mqtt.ClientOption
+	opts = append(opts, mqtt.WithCleanStart(cleanStart))
+	opts = append(opts, mqtt.WithKeepAlive(uint16(keepAlive)))
+	opts = append(opts, mqtt.WithClientID(clientID))
 
-	_, err = client.Connect(context.Background(), &mqttConnect)
+	client := mqtt.NewClient(conn, opts...)
+	_, err = client.Connect(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -155,13 +163,13 @@ func main() {
 	subscriptions := []*mqtt.Subscription{}
 	subscriptions = append(subscriptions, &mqtt.Subscription{TopicFilter: topic, QoSLevel: byte(qosLevel)})
 
-	_, err = client.Subscribe(context.Background(), &mqtt.Subscribe{Subscriptions: subscriptions}, recvr)
+	_, err = client.Subscribe(context.Background(), subscriptions, nil, recvr)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Disconnect the Will client
-	willClient.Disconnect(context.Background(), &mqtt.Disconnect{ReasonCode: mqtt.DisconnectReasonCodeWithWillMessage})
+	willClient.Disconnect(context.Background(), mqtt.DisconnectReasonCodeWithWillMessage, nil)
 	log.Printf("- Waiting for Will message, we should receive will message in %d secs\n", willDelayInterval)
 
 	select {
@@ -173,14 +181,14 @@ func main() {
 	func() {
 		withTimeOut, cancelFn := context.WithTimeout(context.Background(), time.Duration(1)*time.Second)
 		defer cancelFn()
-		_, err = client.Unsubscribe(withTimeOut, &mqtt.Unsubscribe{TopicFilters: []string{topic}})
+		_, err = client.Unsubscribe(withTimeOut, []string{topic}, nil)
 		if err != nil {
 			log.Println("UNSUBSCRIBE returned error ", err)
 		}
 	}()
 
 	// Disconnect from broker
-	client.Disconnect(context.Background(), &mqtt.Disconnect{ReasonCode: mqtt.DisconnectReasonCodeNormalDisconnect})
+	client.Disconnect(context.Background(), mqtt.DisconnectReasonCodeNormal, nil)
 
 	wg.Wait()
 }
