@@ -171,9 +171,9 @@ func (cp *ConnAckProperties) String() string {
 		fields = append(fields, fmt.Sprintf("Authentication Method: %s", cp.AuthenticationMethod))
 	}
 	if len(cp.AuthenticationData) > 0 {
-		fields = append(fields, fmt.Sprintf("Authentication Data: ****"))
+		fields = append(fields, "Authentication Data: ****")
 	}
-	return fmt.Sprintf("{%s}", strings.Join(fields, ","))
+	return "{" + strings.Join(fields, ",") + "}"
 }
 
 func (cp *ConnAckProperties) length() uint32 {

@@ -66,19 +66,19 @@ func TestCodecPublishResponseNoProps(t *testing.T) {
 		pt := packetTypes[i]
 		err = pt.decode(reader, remainingLength)
 		require.NoError(t, err, "decode %s returned an error", getType(pt))
-		switch pt.(type) {
+		switch pt := pt.(type) {
 		case *PubAck:
-			require.Equal(t, PubAckReasonCodeNoMatchingSubscribers, pt.(*PubAck).ReasonCode)
-			require.Equal(t, uint16(0x12), pt.(*PubAck).packetID)
+			require.Equal(t, PubAckReasonCodeNoMatchingSubscribers, pt.ReasonCode)
+			require.Equal(t, uint16(0x12), pt.packetID)
 		case *PubRec:
-			require.Equal(t, PubRecQuotaExceeded, pt.(*PubRec).ReasonCode)
-			require.Equal(t, uint16(0x12), pt.(*PubRec).packetID)
+			require.Equal(t, PubRecQuotaExceeded, pt.ReasonCode)
+			require.Equal(t, uint16(0x12), pt.packetID)
 		case *PubRel:
-			require.Equal(t, PubRelPacketIdentifierNotFound, pt.(*PubRel).ReasonCode)
-			require.Equal(t, uint16(0x12), pt.(*PubRel).packetID)
+			require.Equal(t, PubRelPacketIdentifierNotFound, pt.ReasonCode)
+			require.Equal(t, uint16(0x12), pt.packetID)
 		case *PubComp:
-			require.Equal(t, PubCompPacketIdentifierNotFound, pt.(*PubComp).ReasonCode)
-			require.Equal(t, uint16(0x12), pt.(*PubComp).packetID)
+			require.Equal(t, PubCompPacketIdentifierNotFound, pt.ReasonCode)
+			require.Equal(t, uint16(0x12), pt.packetID)
 		default:
 			// unrecognized message
 			require.Fail(t, "unrecognized packet type")
@@ -157,19 +157,19 @@ func TestCodecPublishResponseWithSuccessCodeAndProps(t *testing.T) {
 		pt := packetTypes[i]
 		err = pt.decode(reader, remainingLength)
 		require.NoError(t, err, "decode %s returned an error", getType(pt))
-		switch pt.(type) {
+		switch pt := pt.(type) {
 		case *PubAck:
-			require.Equal(t, PubAckReasonCodeSuccess, pt.(*PubAck).ReasonCode)
-			require.Equal(t, uint16(0x12), pt.(*PubAck).packetID)
+			require.Equal(t, PubAckReasonCodeSuccess, pt.ReasonCode)
+			require.Equal(t, uint16(0x12), pt.packetID)
 		case *PubRec:
-			require.Equal(t, PubRecReasonCodeSuccess, pt.(*PubRec).ReasonCode)
-			require.Equal(t, uint16(0x12), pt.(*PubRec).packetID)
+			require.Equal(t, PubRecReasonCodeSuccess, pt.ReasonCode)
+			require.Equal(t, uint16(0x12), pt.packetID)
 		case *PubRel:
-			require.Equal(t, PubRelReasonCodeSuccess, pt.(*PubRel).ReasonCode)
-			require.Equal(t, uint16(0x12), pt.(*PubRel).packetID)
+			require.Equal(t, PubRelReasonCodeSuccess, pt.ReasonCode)
+			require.Equal(t, uint16(0x12), pt.packetID)
 		case *PubComp:
-			require.Equal(t, PubCompReasonCodeSuccess, pt.(*PubComp).ReasonCode)
-			require.Equal(t, uint16(0x12), pt.(*PubComp).packetID)
+			require.Equal(t, PubCompReasonCodeSuccess, pt.ReasonCode)
+			require.Equal(t, uint16(0x12), pt.packetID)
 		default:
 			// unrecognized message
 			require.Fail(t, "unrecognized packet type")
@@ -232,19 +232,19 @@ func TestCodecPublishResponseWithSuccessCodeAndNoProps(t *testing.T) {
 		pt := packetTypes[i]
 		err = pt.decode(reader, remainingLength)
 		require.NoError(t, err, "decode %s returned an error", getType(pt))
-		switch pt.(type) {
+		switch pt := pt.(type) {
 		case *PubAck:
-			require.Equal(t, PubAckReasonCodeSuccess, pt.(*PubAck).ReasonCode)
-			require.Equal(t, uint16(0x12), pt.(*PubAck).packetID)
+			require.Equal(t, PubAckReasonCodeSuccess, pt.ReasonCode)
+			require.Equal(t, uint16(0x12), pt.packetID)
 		case *PubRec:
-			require.Equal(t, PubRecReasonCodeSuccess, pt.(*PubRec).ReasonCode)
-			require.Equal(t, uint16(0x12), pt.(*PubRec).packetID)
+			require.Equal(t, PubRecReasonCodeSuccess, pt.ReasonCode)
+			require.Equal(t, uint16(0x12), pt.packetID)
 		case *PubRel:
-			require.Equal(t, PubRelReasonCodeSuccess, pt.(*PubRel).ReasonCode)
-			require.Equal(t, uint16(0x12), pt.(*PubRel).packetID)
+			require.Equal(t, PubRelReasonCodeSuccess, pt.ReasonCode)
+			require.Equal(t, uint16(0x12), pt.packetID)
 		case *PubComp:
-			require.Equal(t, PubCompReasonCodeSuccess, pt.(*PubComp).ReasonCode)
-			require.Equal(t, uint16(0x12), pt.(*PubComp).packetID)
+			require.Equal(t, PubCompReasonCodeSuccess, pt.ReasonCode)
+			require.Equal(t, uint16(0x12), pt.packetID)
 		default:
 			// unrecognized message
 			require.Fail(t, "unrecognized packet type")

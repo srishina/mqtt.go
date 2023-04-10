@@ -26,7 +26,7 @@ func (m *MessageReceiver) Recv() (*Publish, error) {
 	select {
 	case element = <-m.ch:
 	case <-m.closed:
-		return nil, fmt.Errorf("Channel is closed")
+		return nil, fmt.Errorf("channel is closed")
 	}
 
 	m.mu.Lock()

@@ -149,15 +149,12 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for {
-			p, err := recvr.Recv()
-			if err != nil {
-				return
-			}
-			log.Printf("Will message - Topic: %s QoS: %d Payload: %v\n", p.TopicName, p.QoSLevel, string(p.Payload))
-			willMsgRecvd <- struct{}{}
-			break
+		p, err := recvr.Recv()
+		if err != nil {
+			return
 		}
+		log.Printf("Will message - Topic: %s QoS: %d Payload: %v\n", p.TopicName, p.QoSLevel, string(p.Payload))
+		willMsgRecvd <- struct{}{}
 	}()
 	// subscribe
 	subscriptions := []*mqtt.Subscription{}
@@ -172,11 +169,7 @@ func main() {
 	willClient.Disconnect(context.Background(), mqtt.DisconnectReasonCodeWithWillMessage, nil)
 	log.Printf("- Waiting for Will message, we should receive will message in %d secs\n", willDelayInterval)
 
-	select {
-	case <-willMsgRecvd:
-		log.Println("\r- Will message received, unsubscribing")
-		break
-	}
+	<-willMsgRecvd
 
 	func() {
 		withTimeOut, cancelFn := context.WithTimeout(context.Background(), time.Duration(1)*time.Second)

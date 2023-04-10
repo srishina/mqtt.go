@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"strings"
 
 	"github.com/srishina/mqtt.go/internal/mqttutil"
@@ -34,13 +33,6 @@ type ConnectProperties struct {
 	AuthenticationData    []byte
 }
 
-const sessionExpiryIntervalDefault uint32 = 0
-const receiveMaximumDefault uint16 = math.MaxUint16
-const maximumPacketSizeDefault uint32 = math.MaxUint32
-const topicAliasMaximumDefault uint16 = 0
-const requestProblemInfoDefault bool = true
-const requestResponseInfoDefault bool = false
-
 func (cp *ConnectProperties) String() string {
 	var fields []string
 	if cp.SessionExpiryInterval != nil {
@@ -65,9 +57,9 @@ func (cp *ConnectProperties) String() string {
 		fields = append(fields, fmt.Sprintf("Authentication Method: %s", cp.AuthenticationMethod))
 	}
 	if len(cp.AuthenticationData) > 0 {
-		fields = append(fields, fmt.Sprintf("Authentication Data: ****"))
+		fields = append(fields, "Authentication Data: ****")
 	}
-	return fmt.Sprintf("{%s}", strings.Join(fields, ","))
+	return "{" + strings.Join(fields, ",") + "}"
 }
 
 func (cp *ConnectProperties) length() uint32 {
@@ -354,7 +346,7 @@ func (c *Connect) String() string {
 	}
 
 	if len(c.Password) > 0 {
-		fields += fmt.Sprintf(", Password: ***")
+		fields += ", Password: ***"
 	}
 	return fields
 }

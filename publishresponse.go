@@ -172,19 +172,6 @@ func encodePublishResponse(byte0 byte, id uint16, code byte, propEncoder publish
 	return &packet, nil
 }
 
-func (pa *PubAck) decodeProperties(r io.Reader) error {
-	propertyLen, _, err := mqttutil.DecodeVarUint32(r)
-	if err != nil {
-		return err
-	}
-	if propertyLen > 0 {
-		pa.Properties = &PublishResponseProperties{}
-		return pa.Properties.decode(r, propertyLen)
-	}
-
-	return nil
-}
-
 func decodePublishResponse(r io.Reader, remainingLen uint32) (uint16, byte, *PublishResponseProperties, error) {
 	var props *PublishResponseProperties
 	var code byte
@@ -222,7 +209,7 @@ type publishResponsePropertyEncoder interface {
 	encodeProperties(buf *bytes.Buffer, propertyLen uint32) error
 }
 
-//PubAck MQTT PUBACK packet
+// PubAck MQTT PUBACK packet
 type PubAck struct {
 	packetID   uint16
 	ReasonCode PubAckReasonCode

@@ -200,7 +200,7 @@ func (encodedSize) FromVarUint32Array(values []uint32) uint32 {
 }
 
 func (encodedSize) FromUTF8StringPair(values map[string]string) uint32 {
-	if values == nil || len(values) == 0 {
+	if len(values) == 0 {
 		return 0
 	}
 
@@ -306,7 +306,7 @@ func (encoder) FromVarUint32Array(buf *bytes.Buffer, id PropertyID, values []uin
 }
 
 func (encoder) FromUTF8StringPair(buf *bytes.Buffer, id PropertyID, values map[string]string) error {
-	if values == nil || len(values) == 0 {
+	if len(values) == 0 {
 		return nil
 	}
 	for k, v := range values {

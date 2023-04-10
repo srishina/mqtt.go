@@ -222,6 +222,10 @@ func (s *Subscribe) decode(r io.Reader, remainingLen uint32) error {
 
 	for remainingLen > 0 {
 		topicFilter, _, err := mqttutil.DecodeUTF8String(r)
+		if err != nil {
+			return err
+		}
+
 		b, err := mqttutil.DecodeByte(r)
 		if err != nil {
 			return err

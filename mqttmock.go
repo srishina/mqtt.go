@@ -18,7 +18,6 @@ type mqttMockTester struct {
 	requests                  []packettype.PacketType
 	responses                 map[packettype.PacketType]controlPacket
 	triggerPublishOnsubscribe bool
-	publishAckd               bool
 	disconnectAtPacketCount   int
 	clientReadDeadline        time.Duration
 	wg                        sync.WaitGroup

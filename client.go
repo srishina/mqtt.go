@@ -185,8 +185,8 @@ type Client interface {
 	// callback can be added for a particular event name
 	On(eventName string, callback interface{}) error
 
-	// Off removed the callback associated with the event name
-	Off(eventName string, value interface{}) error
+	// Off remove the callback associated with the event name
+	Off(eventName string, callback interface{}) error
 }
 
 // NewClient creates a new MQTT client
@@ -325,9 +325,8 @@ func (c *client) On(eventName string, callback interface{}) error {
 	return c.eventEmitter.on(eventName, callback)
 }
 
-func (c *client) Off(eventName string, value interface{}) error {
-	c.eventEmitter.emit(eventName, value)
-	return nil
+func (c *client) Off(eventName string, callback interface{}) error {
+	return c.eventEmitter.off(eventName, callback)
 }
 
 func (c *client) Unsubscribe(ctx context.Context, topicFilters []string, props *UnsubscribeProperties) (*UnsubAck, error) {
@@ -358,7 +357,6 @@ func (c *client) Unsubscribe(ctx context.Context, topicFilters []string, props *
 
 	select {
 	case <-ctx.Done():
-		fmt.Println("Error waiting for UNSUBACK ", ctx.Err())
 		return nil, ctx.Err()
 	case result = <-req.result:
 	}
@@ -367,7 +365,7 @@ func (c *client) Unsubscribe(ctx context.Context, topicFilters []string, props *
 		return unsuback, req.err
 	}
 
-	return nil, fmt.Errorf("Internal error during UNSUBSCRIBE, invalid typs received")
+	return nil, fmt.Errorf("error during UNSUBSCRIBE, invalid typs received")
 }
 
 func (c *client) Publish(ctx context.Context, topic string, qosLevel byte, retain bool, payload []byte, props *PublishProperties) error {
@@ -410,9 +408,8 @@ func (c *client) Publish(ctx context.Context, topic string, qosLevel byte, retai
 
 		select {
 		case <-ctx.Done():
-			fmt.Println("timeout waiting for PUBLISH ", ctx.Err())
 			return ctx.Err()
-		case _ = <-req.result:
+		case <-req.result:
 		}
 		return nil
 	}
@@ -425,7 +422,7 @@ func (c *client) Publish(ctx context.Context, topic string, qosLevel byte, retai
 		return nil
 	}
 
-	return fmt.Errorf("Disconnected - QoS0 packets will be discarded")
+	return fmt.Errorf("client disconnected - QoS0 packets will be discarded")
 }
 
 func (c *client) subscribe(ctx context.Context, s *clientSubscription) (*SubAck, error) {
@@ -449,7 +446,6 @@ func (c *client) subscribeInternal(ctx context.Context, s *clientSubscription) (
 	var result interface{}
 	select {
 	case <-ctx.Done():
-		fmt.Println("Error waiting for SUBACK ", ctx.Err())
 		return nil, ctx.Err()
 	case result = <-req.result:
 	}
@@ -468,7 +464,7 @@ func (c *client) subscribeInternal(ctx context.Context, s *clientSubscription) (
 		return suback, nil
 	}
 
-	return nil, fmt.Errorf("Internal error during SUBSCRIBE, invalid typs received")
+	return nil, fmt.Errorf("error during SUBSCRIBE, invalid typs received")
 }
 
 func (c *client) resubscribe(ctx context.Context, s *Subscribe) (*SubAck, error) {
@@ -489,7 +485,6 @@ func (c *client) resubscribe(ctx context.Context, s *Subscribe) (*SubAck, error)
 	var result interface{}
 	select {
 	case <-ctx.Done():
-		fmt.Println("Error waiting for SUBACK ", ctx.Err())
 		return nil, ctx.Err()
 	case result = <-req.result:
 	}
@@ -498,7 +493,7 @@ func (c *client) resubscribe(ctx context.Context, s *Subscribe) (*SubAck, error)
 		return suback, nil
 	}
 
-	return nil, fmt.Errorf("Internal error during SUBSCRIBE, invalid typs received")
+	return nil, fmt.Errorf("error during SUBSCRIBE, invalid typs received")
 }
 
 func (c *client) messageDispatcher() error {
@@ -567,7 +562,6 @@ func (c *client) connect(ctx context.Context) (*protocolHandler, *ConnAck, error
 	select {
 	case <-done:
 	case <-ctx.Done():
-		fmt.Println("cancelled connect due to timeout")
 		// close the connection will force connect call to return
 		c.conn.Close()
 	}
@@ -640,7 +634,6 @@ func (c *client) restoreState(ph *protocolHandler, connack *ConnAck, sem *semaph
 			case *Unsubscribe:
 				req.pkt.(*Unsubscribe).packetID = id
 			default:
-				fmt.Println("Invalid packet found in pending requests")
 				c.pidgenerator.FreeID(id)
 				continue
 			}
@@ -840,13 +833,8 @@ func (c *client) complete(msgID uint16, err error, result interface{}) {
 
 		// Delete the pending request from queue
 		delete(c.state.pendingRequests, msgID)
-		if _, ok := c.state.outgoingPackets[msgID]; !ok {
-			fmt.Println("outgoing packet not found")
-		}
 		// remove from outgoing queue
 		delete(c.state.outgoingPackets, msgID)
-	} else {
-		fmt.Println("pending request not found")
 	}
 
 	c.pidgenerator.FreeID(msgID)
@@ -953,6 +941,10 @@ func (c *protocolHandler) connect(mqttConnect *Connect) (*ConnAck, error) {
 }
 
 func (c *protocolHandler) disconnect(d *Disconnect) error {
+	if c.packetsToSend != nil {
+		c.packetsToSend.close()
+		c.packetsToSend = nil
+	}
 	return c.sendPacket(d)
 }
 
@@ -1058,7 +1050,7 @@ func (c *protocolHandler) pinger() {
 			}
 
 			if err := c.sendPacket(&pingReq{}); err != nil {
-				c.shutdown(errors.New("Failed to send PINGREQ, disconnecting"))
+				c.shutdown(errors.New("failed to send PINGREQ, disconnecting"))
 				return
 			}
 
@@ -1075,23 +1067,23 @@ func (c *protocolHandler) pinger() {
 }
 
 func (c *protocolHandler) process(pkt controlPacket) error {
-	switch pkt.(type) {
+	switch pkt := pkt.(type) {
 	case *Publish:
-		return c.publishHandler(pkt.(*Publish))
+		return c.publishHandler(pkt)
 	case *PubAck:
-		return c.pubAckHandler(pkt.(*PubAck))
+		return c.pubAckHandler(pkt)
 	case *PubRec:
-		return c.pubRecHandler(pkt.(*PubRec))
+		return c.pubRecHandler(pkt)
 	case *PubRel:
-		return c.pubRelHandler(pkt.(*PubRel))
+		return c.pubRelHandler(pkt)
 	case *PubComp:
-		return c.pubCompHandler(pkt.(*PubComp))
+		return c.pubCompHandler(pkt)
 	case *SubAck:
-		return c.subAckHandler(pkt.(*SubAck))
+		return c.subAckHandler(pkt)
 	case *UnsubAck:
-		return c.unSubAckHandler(pkt.(*UnsubAck))
+		return c.unSubAckHandler(pkt)
 	case *pingResp:
-		return c.pingRespHandler(pkt.(*pingResp))
+		return c.pingRespHandler(pkt)
 	default:
 		// unrecognized message
 		return ErrProtocol

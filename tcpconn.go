@@ -14,7 +14,6 @@ type TCPConn struct {
 	conn      net.Conn
 	Host      string
 	TLSConfig *tls.Config
-	rw        io.ReadWriter
 }
 
 // BrokerURL the broker URL

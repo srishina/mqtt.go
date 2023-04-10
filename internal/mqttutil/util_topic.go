@@ -7,8 +7,8 @@ import (
 )
 
 var (
-	ErrInvalidTopic           = errors.New("Invalid topic")
-	ErrEmptySubscriptionTopic = errors.New("Empty subscription topics are not allowed")
+	ErrInvalidTopic           = errors.New("invalid topic")
+	ErrEmptySubscriptionTopic = errors.New("empty subscription topics are not allowed")
 )
 
 // ValidatePublishTopic that a topic used for publishing is valid.
@@ -53,10 +53,6 @@ func ValidateSubscribeTopic(topic string) error {
 		previousChar = c
 	}
 	return nil
-}
-
-func isEmpty(str string) bool {
-	return len(str) == 0
 }
 
 // Subscriber subscriber interface, when the subscriber is going away

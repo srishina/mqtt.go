@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	_ "net/http/pprof"
+
 	mqtt "github.com/srishina/mqtt.go"
 )
 
@@ -80,6 +82,7 @@ func main() {
 	default:
 		log.Fatal("Invalid scheme name")
 	}
+
 	var opts []mqtt.ClientOption
 	opts = append(opts, mqtt.WithCleanStart(cleanStart))
 	opts = append(opts, mqtt.WithKeepAlive(uint16(keepAlive)))
@@ -98,7 +101,7 @@ func main() {
 		fmt.Printf("\r- Will exit in %dsecs OR Press Ctrl+C to exit\n", exitIn)
 		shutdownCh := make(chan struct{})
 		go func() {
-			c := make(chan os.Signal)
+			c := make(chan os.Signal, 1)
 			signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 			select {
 			case <-time.After(time.Duration(exitIn) * time.Second):
@@ -106,9 +109,7 @@ func main() {
 			}
 			close(shutdownCh)
 		}()
-		select {
-		case <-shutdownCh:
-		}
+		<-shutdownCh
 	}
 
 	// Disconnect from broker

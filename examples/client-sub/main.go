@@ -140,17 +140,14 @@ func main() {
 	fmt.Println("\r- Press Ctrl+C to exit")
 	shutdownCh := make(chan struct{})
 	go func() {
-		c := make(chan os.Signal)
+		c := make(chan os.Signal, 1)
 		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 		<-c
 		close(shutdownCh)
 	}()
 
-	select {
-	case <-shutdownCh:
-		log.Println("\r- Ctrl+C pressed in Terminal, unsubscribing")
-		break
-	}
+	<-shutdownCh
+	log.Println("\r- Ctrl+C pressed in Terminal, unsubscribing")
 
 	func() {
 		withTimeOut, cancelFn := context.WithTimeout(context.Background(), time.Duration(1)*time.Second)

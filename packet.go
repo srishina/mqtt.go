@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	ErrProtocol = errors.New("Protocol error")
+	ErrProtocol = errors.New("protocol error")
 )
 
 // controlPacket MQTT control packet codec interface

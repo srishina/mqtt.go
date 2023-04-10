@@ -95,11 +95,11 @@ func DecodeVarUint32(r io.Reader) (uint32, int, error) {
 		value += int(encodedByte&0x7f) * multiplier
 
 		if multiplier > 128*128*128 {
-			return 0, 0, fmt.Errorf("Variable integer contains value of %d which is more than the permissible", value)
+			return 0, 0, fmt.Errorf("integer variable contains value of %d which is more than the permissible", value)
 		}
 
 		if consumed > 4 {
-			return 0, 0, fmt.Errorf("Variable integer contained more than maximum bytes %d", consumed)
+			return 0, 0, fmt.Errorf("integer variable contained more than maximum bytes %d", consumed)
 		}
 
 		if encodedByte&0x80 == 0 {
@@ -113,12 +113,7 @@ func DecodeVarUint32(r io.Reader) (uint32, int, error) {
 func EncodedVarUint32Size(val uint32) uint32 {
 	var size uint32
 	for ok := true; ok; ok = !(val == 0) {
-		encodedByte := val % 0x80
 		val = val / 0x80
-
-		if val > 0 {
-			encodedByte = encodedByte | 0x80
-		}
 		size++
 	}
 	return size
@@ -126,7 +121,7 @@ func EncodedVarUint32Size(val uint32) uint32 {
 
 func EncodeVarUint32(buf *bytes.Buffer, val uint32) error {
 	if val > maxVarUint32 {
-		return fmt.Errorf("Variable integer contains value of %d which is more than the permissible", val)
+		return fmt.Errorf("integer variable contains value of %d which is more than the permissible", val)
 	}
 
 	for ok := true; ok; ok = !(val == 0) {
