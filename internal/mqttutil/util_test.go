@@ -97,7 +97,7 @@ func TestCodecVarUint32(t *testing.T) {
 
 	// Test decode mid underflow(EOF) error, invalid byte array
 	_, _, err = DecodeVarUint32(bytes.NewBuffer([]byte{0x80, 0x80, 0x80}))
-	assert.Error(t, err, "DecodeVarUint32 did not return an error(mid underflow - EOF) for zero bytes input buffer")
+	assert.Error(t, err, "DecodeVarUint32 did not return an error(mid underflow - EOF) for an invalid input buffer")
 }
 
 func TestCodecUTF8String(t *testing.T) {
