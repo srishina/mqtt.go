@@ -361,8 +361,12 @@ func (c *client) Unsubscribe(ctx context.Context, topicFilters []string, props *
 	case result = <-req.result:
 	}
 
+	if req.err != nil {
+		return nil, req.err
+	}
+
 	if unsuback, ok := result.(*UnsubAck); ok {
-		return unsuback, req.err
+		return unsuback, nil
 	}
 
 	return nil, fmt.Errorf("error during UNSUBSCRIBE, invalid typs received")
