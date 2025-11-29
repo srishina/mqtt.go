@@ -3,6 +3,7 @@ package mqtt
 import (
 	"fmt"
 	"sync"
+	"time"
 )
 
 // MessageReceiver that allows receiving subscribed messages
@@ -34,6 +35,23 @@ func (m *MessageReceiver) Recv() (*Publish, error) {
 	m.mu.Unlock()
 	return element, nil
 }
+
+func (m *MessageReceiver) recvTimeout(timeoutMs uint) (*Publish, error) {
+	var element *Publish
+	select {
+	case element = <-m.ch:
+	case <-time.After(time.Duration(int64(timeoutMs) * time.MicroSeconds)):
+		return nil, nil
+	case <-m.closed:
+		return nil, fmt.Errorf("channel is closed")
+	}
+
+	m.mu.Lock()
+	m.shift()
+	m.mu.Unlock()
+	return element, nil
+}
+
 
 func (m *MessageReceiver) send(p *Publish) error {
 	m.mu.Lock()
